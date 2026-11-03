@@ -31,6 +31,13 @@ useBE     = input.bool(true, "Use breakeven stop", group = grpR)
 beTrigger = input.int(100, "Breakeven trigger (ticks in profit)", minval = 1, group = grpR)
 beOffset  = input.int(3, "Breakeven offset (ticks beyond entry)", group = grpR, tooltip = "0 = stop exactly at entry. 3 = lock in 3 ticks.")
 
+grpF = "Trend filter (take profit)"
+useTrendTP   = input.bool(false, "Use bigger TP on with-trend trades", group = grpF, tooltip = "Longs in an uptrend and shorts in a downtrend use the with-trend TP. Counter-trend trades keep the normal TP.")
+tpTrendTicks = input.int(400, "With-trend take profit (ticks)", minval = 1, group = grpF)
+trendTf      = input.timeframe("15", "Trend timeframe", group = grpF, tooltip = "Fixed timeframe so the trend reads the same on every chart timeframe. Keep it at or above the chart timeframe.")
+trendLen     = input.int(50, "Trend EMA length", minval = 1, group = grpF, tooltip = "Uptrend = last closed trend-timeframe bar closed above its EMA. Downtrend = closed below.")
+showTrend    = input.bool(true, "Show trend EMA", group = grpF)
+
 grpT = "Trade rules"
 contracts   = input.int(10, "Contracts per trade", minval = 1, group = grpT)
 maxTrades   = input.int(5, "Max trades per day", minval = 1, group = grpT)
@@ -53,6 +60,14 @@ inTrade = not na(time(timeframe.period, tradeSess, tz))
 // This lets the limits rest from the 08:30 open instead of one bar late.
 nextInRange = not na(time(timeframe.period, rangeSess, tz, -1))
 nextInTrade = not na(time(timeframe.period, tradeSess, tz, -1))
+
+// ---------- Trend ----------
+// Uses the last CLOSED trend-timeframe bar ([1] + lookahead_on), so it never repaints.
+[htfClose, htfEma] = request.security(syminfo.tickerid, trendTf, [close[1], ta.ema(close, trendLen)[1]], lookahead = barmerge.lookahead_on)
+trendUp  = htfClose > htfEma
+trendDn  = htfClose < htfEma
+tpLongT  = useTrendTP and trendUp ? tpTrendTicks : tpTicks
+tpShortT = useTrendTP and trendDn ? tpTrendTicks : tpTicks
 
 var float rangeHigh = na
 var float rangeLow  = na
@@ -103,13 +118,13 @@ shortReady = canTrade and allowShort and not (onePerLevel and shortUsed) and clo
 // Resting limit orders at the levels = "touch" entries. OCA so only one side fills.
 if longReady
     strategy.entry("Long", strategy.long, qty = contracts, limit = longLvl, oca_name = "porr", oca_type = strategy.oca.cancel)
-    strategy.exit("Long Exit", "Long", profit = tpTicks, loss = slTicks)
+    strategy.exit("Long Exit", "Long", profit = tpLongT, loss = slTicks, comment_profit = "TP", comment_loss = "SL")
 else
     strategy.cancel("Long")
 
 if shortReady
     strategy.entry("Short", strategy.short, qty = contracts, limit = shortLvl, oca_name = "porr", oca_type = strategy.oca.cancel)
-    strategy.exit("Short Exit", "Short", profit = tpTicks, loss = slTicks)
+    strategy.exit("Short Exit", "Short", profit = tpShortT, loss = slTicks, comment_profit = "TP", comment_loss = "SL")
 else
     strategy.cancel("Short")
 
@@ -119,9 +134,11 @@ else
 entryPx = strategy.position_avg_price
 var float bestHigh = na
 var float bestLow  = na
+var int   tradeTp  = na   // TP for the open trade, locked at entry from the trend at that time
 if strategy.position_size != 0
     entryBar = strategy.opentrades.entry_bar_index(strategy.opentrades - 1)
     if bar_index == entryBar
+        tradeTp := strategy.position_size > 0 ? tpLongT : tpShortT
         // On the entry bar the high/low may include price from BEFORE the fill. They are only
         // safe to use if the bar opened through the level (limit filled at the open);
         // otherwise use the current price, which is always after the fill.
@@ -132,17 +149,17 @@ if strategy.position_size != 0
         bestLow  := math.min(bestLow, low)
 
 if strategy.position_size > 0
-    tp = entryPx + tpTicks * tick
+    tp = entryPx + nz(tradeTp, tpLongT) * tick
     sl = entryPx - slTicks * tick
     if useBE and bestHigh >= entryPx + beTrigger * tick
         sl := entryPx + beOffset * tick
-    strategy.exit("Long Exit", "Long", limit = tp, stop = sl)
+    strategy.exit("Long Exit", "Long", limit = tp, stop = sl, comment_profit = "TP", comment_loss = "SL")
 else if strategy.position_size < 0
-    tp = entryPx - tpTicks * tick
+    tp = entryPx - nz(tradeTp, tpShortT) * tick
     sl = entryPx + slTicks * tick
     if useBE and bestLow <= entryPx - beTrigger * tick
         sl := entryPx - beOffset * tick
-    strategy.exit("Short Exit", "Short", limit = tp, stop = sl)
+    strategy.exit("Short Exit", "Short", limit = tp, stop = sl, comment_profit = "TP", comment_loss = "SL")
 
 if flatAtEnd and inTrade and not nextInTrade and barstate.isconfirmed
     strategy.close_all(comment = "EOD")
@@ -156,6 +173,7 @@ bgcolor(showRangeBg and inRange ? color.new(color.blue, 88) : na, title = "Range
 posLong  = strategy.position_size > 0
 posShort = strategy.position_size < 0
 plot(posLong or posShort ? entryPx : na, "Entry", color.gray, 1, plot.style_linebr)
+plot(showTrend ? htfEma : na, "Trend EMA", trendUp ? color.teal : color.orange, 2)
 
 // ---------- End of day ----------
 // Retire the day's levels when the trade window closes, so a day with no range bars
@@ -180,7 +198,8 @@ if barstate.isconfirmed and strategy.closedtrades > processed
         exP    = strategy.closedtrades.exit_price(i)
         eBar   = strategy.closedtrades.entry_bar_index(i)
         xBar   = strategy.closedtrades.exit_bar_index(i)
-        isTP   = (isLong ? exP - entP : entP - exP) >= (tpTicks - 1) * tick
+        // TP exits are tagged "TP" (works for both the normal and the with-trend TP)
+        isTP   = strategy.closedtrades.exit_comment(i) == "TP"
         isEOD  = strategy.closedtrades.exit_comment(i) == "EOD"
         // Entry bar: everything before a limit fill is on the far side of the entry, so the
         // bar's low (long) / high (short) is after the fill and safe to use.
