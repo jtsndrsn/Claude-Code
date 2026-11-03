@@ -1,5 +1,7 @@
 //@version=6
-// Pre-Open Range Reversal  -  Version 1.0
+// Pre-Open Range Reversal  -  Version 1.1
+// v1.1 defaults: TP 400 / SL 400, no breakeven, entry delay 24, 1 contract, max 4 trades,
+//   trend TP 600 on 1h EMA50 (off), flip 100/100 (off).
 // Marks the high/low of the hour before the cash open (default 07:30-08:30 Central,
 // i.e. Oklahoma time) and fades the first touch of either level after the open:
 //   touch range HIGH -> short, touch range LOW -> long.
@@ -27,31 +29,31 @@ tradeSess = input.session("0830-1500", "Trade window (look for touches)", group 
 flatAtEnd = input.bool(true, "Flatten open trade at end of trade window", group = grpS)
 
 grpR = "Risk (ticks)"
-tpTicks   = input.int(500, "Take profit (ticks)", minval = 1, group = grpR)
-slTicks   = input.int(100, "Stop loss (ticks)", minval = 1, group = grpR)
-useBE     = input.bool(true, "Use breakeven stop", group = grpR)
+tpTicks   = input.int(400, "Take profit (ticks)", minval = 1, group = grpR)
+slTicks   = input.int(400, "Stop loss (ticks)", minval = 1, group = grpR)
+useBE     = input.bool(false, "Use breakeven stop", group = grpR)
 beTrigger = input.int(100, "Breakeven trigger (ticks in profit)", minval = 1, group = grpR)
 beOffset  = input.int(3, "Breakeven offset (ticks beyond entry)", group = grpR, tooltip = "0 = stop exactly at entry. 3 = lock in 3 ticks.")
 
 grpF = "Trend filter (take profit)"
 useTrendTP   = input.bool(false, "Use bigger TP on with-trend trades", group = grpF, tooltip = "Longs in an uptrend and shorts in a downtrend use the with-trend TP. Counter-trend trades keep the normal TP.")
-tpTrendTicks = input.int(400, "With-trend take profit (ticks)", minval = 1, group = grpF)
-trendTf      = input.timeframe("15", "Trend timeframe", group = grpF, tooltip = "Fixed timeframe so the trend reads the same on every chart timeframe. Keep it at or above the chart timeframe.")
+tpTrendTicks = input.int(600, "With-trend take profit (ticks)", minval = 1, group = grpF)
+trendTf      = input.timeframe("60", "Trend timeframe", group = grpF, tooltip = "Fixed timeframe so the trend reads the same on every chart timeframe. Keep it at or above the chart timeframe.")
 trendLen     = input.int(50, "Trend EMA length", minval = 1, group = grpF, tooltip = "Uptrend = last closed trend-timeframe bar closed above its EMA. Downtrend = closed below.")
-showTrend    = input.bool(true, "Show trend EMA", group = grpF)
+showTrend    = input.bool(false, "Show trend EMA", group = grpF)
 
 grpX = "Flip trade (after stop-out)"
 useFlip  = input.bool(false, "Flip after a full stop-out", group = grpX, tooltip = "If a Long from the range LOW is stopped out, rest a Short limit back at the range low (retest of the broken line). If a Short from the range HIGH is stopped out, rest a Long limit at the range high. One flip per line per day; counts toward max trades per day. A breakeven stop-out does not trigger a flip.")
-flipTp   = input.int(200, "Flip take profit (ticks)", minval = 1, group = grpX)
+flipTp   = input.int(100, "Flip take profit (ticks)", minval = 1, group = grpX)
 flipSl   = input.int(100, "Flip stop loss (ticks)", minval = 1, group = grpX)
 
 grpT = "Trade rules"
-contracts   = input.int(10, "Contracts per trade", minval = 1, group = grpT)
+contracts   = input.int(1, "Contracts per trade", minval = 1, group = grpT)
 maxTrades   = input.int(5, "Max trades per day", minval = 1, group = grpT)
 onePerLevel = input.bool(true, "Only one trade per level per day", group = grpT)
 allowLong   = input.bool(true, "Take longs (range low touch)", group = grpT)
 allowShort  = input.bool(true, "Take shorts (range high touch)", group = grpT)
-entryDelay  = input.int(0, "Entry delay (ticks beyond line)", minval = 0, group = grpT, tooltip = "Rests each limit this many ticks BEYOND the line: long below the range low, short above the range high. Read the dip stats with this at 0 first: above 0, trades that never dipped that far are not taken, so the stats only describe the deeper dips.")
+entryDelay  = input.int(24, "Entry delay (ticks beyond line)", minval = 0, group = grpT, tooltip = "Rests each limit this many ticks BEYOND the line: long below the range low, short above the range high. Read the dip stats with this at 0 first: above 0, trades that never dipped that far are not taken, so the stats only describe the deeper dips.")
 
 grpV = "Visuals"
 showLevels = input.bool(true, "Show range lines", group = grpV)

@@ -112,7 +112,7 @@ def live(cfg: Config, raw: dict, tz: str) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="PORR v1.0 bot")
+    ap = argparse.ArgumentParser(description="PORR v1.1 bot")
     ap.add_argument("mode", choices=["replay", "live"])
     ap.add_argument("--config", default=None)
     ap.add_argument("--csv", help="TradingView 1-minute export for replay")

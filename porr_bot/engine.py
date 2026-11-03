@@ -1,6 +1,6 @@
-"""PORR v1.0 strategy engine (broker-agnostic).
+"""PORR v1.1 strategy engine (broker-agnostic).
 
-Mirrors strategies/porr.pine v1.0:
+Mirrors strategies/porr.pine v1.1:
   * Range = high/low of the 1-minute bars inside the range window (default 07:30-08:30 CT).
   * From the trade-window open, rest a BUY limit at range low (- entry delay) and a SELL limit
     at range high (+ entry delay). First fill cancels the other (manual OCA).
@@ -59,26 +59,26 @@ class Config:
     trade_start: time = time(8, 30)
     trade_end: time = time(15, 0)
     flat_at_end: bool = True
-    tp_ticks: int = 500
-    sl_ticks: int = 100
-    use_be: bool = True
+    tp_ticks: int = 400
+    sl_ticks: int = 400
+    use_be: bool = False
     be_trigger: int = 100
     be_offset: int = 3
     use_trend_tp: bool = False
-    tp_trend_ticks: int = 400
-    trend_minutes: int = 15
+    tp_trend_ticks: int = 600
+    trend_minutes: int = 60
     trend_len: int = 50
     use_flip: bool = False
-    flip_tp: int = 200
+    flip_tp: int = 100
     flip_sl: int = 100
-    contracts: int = 10
-    max_trades: int = 5
+    contracts: int = 1
+    max_trades: int = 4
     one_per_level: bool = True
     allow_long: bool = True
     allow_short: bool = True
-    entry_delay: int = 0
+    entry_delay: int = 24
     # Safety: hard cap on contracts per order, regardless of `contracts`.
-    max_contracts_cap: int = 10
+    max_contracts_cap: int = 1
     trade_log: str = "trades.csv"
 
 

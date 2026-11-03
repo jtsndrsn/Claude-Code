@@ -62,7 +62,8 @@ class EngineTest(unittest.TestCase):
             return list(csv.DictReader(fh))
 
     def cfg(self, **kw):
-        base = dict(tp_ticks=20, sl_ticks=20, use_be=False, contracts=1, max_contracts_cap=1, trade_log=self.log)
+        base = dict(tp_ticks=20, sl_ticks=20, use_be=False, contracts=1, max_contracts_cap=1, entry_delay=0,
+                    trend_minutes=15, trade_log=self.log)
         base.update(kw)
         return Config(**base)
 
