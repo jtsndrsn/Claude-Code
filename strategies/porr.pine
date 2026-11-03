@@ -5,6 +5,8 @@
 //   touch range HIGH -> short, touch range LOW -> long.
 // Fixed TP/SL in ticks, with an optional move-stop-to-breakeven once price runs
 // a set number of ticks in your favor.
+// Optional flip: if a fade is fully stopped out, rest a limit back at the broken line
+// in the breakout direction to catch the retest.
 // Use a 1-5 minute chart so the 07:30 / 08:30 boundaries line up with bar opens.
 strategy("Pre-Open Range Reversal", shorttitle = "PORR", overlay = true,
      initial_capital = 50000, default_qty_type = strategy.fixed, default_qty_value = 1,
@@ -37,6 +39,11 @@ tpTrendTicks = input.int(400, "With-trend take profit (ticks)", minval = 1, grou
 trendTf      = input.timeframe("15", "Trend timeframe", group = grpF, tooltip = "Fixed timeframe so the trend reads the same on every chart timeframe. Keep it at or above the chart timeframe.")
 trendLen     = input.int(50, "Trend EMA length", minval = 1, group = grpF, tooltip = "Uptrend = last closed trend-timeframe bar closed above its EMA. Downtrend = closed below.")
 showTrend    = input.bool(true, "Show trend EMA", group = grpF)
+
+grpX = "Flip trade (after stop-out)"
+useFlip  = input.bool(false, "Flip after a full stop-out", group = grpX, tooltip = "If a Long from the range LOW is stopped out, rest a Short limit back at the range low (retest of the broken line). If a Short from the range HIGH is stopped out, rest a Long limit at the range high. One flip per line per day; counts toward max trades per day. A breakeven stop-out does not trigger a flip.")
+flipTp   = input.int(200, "Flip take profit (ticks)", minval = 1, group = grpX)
+flipSl   = input.int(100, "Flip stop loss (ticks)", minval = 1, group = grpX)
 
 grpT = "Trade rules"
 contracts   = input.int(10, "Contracts per trade", minval = 1, group = grpT)
@@ -75,6 +82,10 @@ var bool  rangeDone = false
 var int   tradesToday = 0
 var bool  longUsed  = false
 var bool  shortUsed = false
+var bool  flipLongArmed  = false   // short at range HIGH was stopped out -> long the retest of the high
+var bool  flipShortArmed = false   // long at range LOW was stopped out  -> short the retest of the low
+var bool  flipLongUsed   = false
+var bool  flipShortUsed  = false
 
 if inRange and not inRange[1]
     // New day's range starts: reset everything
@@ -84,6 +95,10 @@ if inRange and not inRange[1]
     tradesToday := 0
     longUsed    := false
     shortUsed   := false
+    flipLongArmed  := false
+    flipShortArmed := false
+    flipLongUsed   := false
+    flipShortUsed  := false
 else if inRange
     rangeHigh := math.max(rangeHigh, high)
     rangeLow  := math.min(rangeLow, low)
@@ -99,11 +114,24 @@ totalTrades = strategy.closedtrades + strategy.opentrades
 newTrade    = totalTrades > nz(totalTrades[1])
 if newTrade
     tradesToday += totalTrades - nz(totalTrades[1])
-    lastSize = strategy.opentrades > 0 ? strategy.opentrades.size(strategy.opentrades - 1) : strategy.closedtrades.size(strategy.closedtrades - 1)
-    if lastSize > 0
-        longUsed := true
-    else
-        shortUsed := true
+    lastId = strategy.opentrades > 0 ? strategy.opentrades.entry_id(strategy.opentrades - 1) : strategy.closedtrades.entry_id(strategy.closedtrades - 1)
+    switch lastId
+        "Long"       => longUsed      := true
+        "Short"      => shortUsed     := true
+        "Flip Long"  => flipLongUsed  := true
+        "Flip Short" => flipShortUsed := true
+
+// A main trade that hit its FULL stop (not a breakeven stop) arms the flip for that line.
+if strategy.closedtrades > nz(strategy.closedtrades[1])
+    li    = strategy.closedtrades - 1
+    lId   = strategy.closedtrades.entry_id(li)
+    lEnt  = strategy.closedtrades.entry_price(li)
+    lExit = strategy.closedtrades.exit_price(li)
+    fullStop = strategy.closedtrades.exit_comment(li) == "SL"
+    if fullStop and lId == "Long" and lExit <= lEnt - (slTicks - 1) * tick
+        flipShortArmed := true
+    if fullStop and lId == "Short" and lExit >= lEnt + (slTicks - 1) * tick
+        flipLongArmed := true
 
 // ---------- Entries ----------
 flat       = strategy.position_size == 0
@@ -128,17 +156,38 @@ if shortReady
 else
     strategy.cancel("Short")
 
+// Flip entries: resting limit back AT the broken line, waiting for price to retest it from the other side.
+flipShortReady = useFlip and canTrade and flipShortArmed and not flipShortUsed and close < rangeLow
+flipLongReady  = useFlip and canTrade and flipLongArmed  and not flipLongUsed  and close > rangeHigh
+
+if flipShortReady
+    strategy.entry("Flip Short", strategy.short, qty = contracts, limit = rangeLow, oca_name = "porr", oca_type = strategy.oca.cancel)
+    strategy.exit("Flip Short Exit", "Flip Short", profit = flipTp, loss = flipSl, comment_profit = "TP", comment_loss = "SL")
+else
+    strategy.cancel("Flip Short")
+
+if flipLongReady
+    strategy.entry("Flip Long", strategy.long, qty = contracts, limit = rangeHigh, oca_name = "porr", oca_type = strategy.oca.cancel)
+    strategy.exit("Flip Long Exit", "Flip Long", profit = flipTp, loss = flipSl, comment_profit = "TP", comment_loss = "SL")
+else
+    strategy.cancel("Flip Long")
+
 // ---------- Exits / breakeven ----------
 // Best price reached since the fill. With "On history bar tick" on, this updates on every
 // simulated tick inside the bar, so the stop moves to breakeven intrabar (not at bar close).
 entryPx = strategy.position_avg_price
 var float bestHigh = na
 var float bestLow  = na
-var int   tradeTp  = na   // TP for the open trade, locked at entry from the trend at that time
+var int   tradeTp  = na   // TP for the open trade, locked at entry (trend TP or flip TP)
+var int   tradeSl  = na
+var string tradeId = na
 if strategy.position_size != 0
     entryBar = strategy.opentrades.entry_bar_index(strategy.opentrades - 1)
     if bar_index == entryBar
-        tradeTp := strategy.position_size > 0 ? tpLongT : tpShortT
+        tradeId := strategy.opentrades.entry_id(strategy.opentrades - 1)
+        isFlip   = str.startswith(tradeId, "Flip")
+        tradeTp := isFlip ? flipTp : strategy.position_size > 0 ? tpLongT : tpShortT
+        tradeSl := isFlip ? flipSl : slTicks
         // On the entry bar the high/low may include price from BEFORE the fill. They are only
         // safe to use if the bar opened through the level (limit filled at the open);
         // otherwise use the current price, which is always after the fill.
@@ -150,16 +199,16 @@ if strategy.position_size != 0
 
 if strategy.position_size > 0
     tp = entryPx + nz(tradeTp, tpLongT) * tick
-    sl = entryPx - slTicks * tick
+    sl = entryPx - nz(tradeSl, slTicks) * tick
     if useBE and bestHigh >= entryPx + beTrigger * tick
         sl := entryPx + beOffset * tick
-    strategy.exit("Long Exit", "Long", limit = tp, stop = sl, comment_profit = "TP", comment_loss = "SL")
+    strategy.exit(tradeId + " Exit", tradeId, limit = tp, stop = sl, comment_profit = "TP", comment_loss = "SL")
 else if strategy.position_size < 0
     tp = entryPx - nz(tradeTp, tpShortT) * tick
-    sl = entryPx + slTicks * tick
+    sl = entryPx + nz(tradeSl, slTicks) * tick
     if useBE and bestLow <= entryPx - beTrigger * tick
         sl := entryPx - beOffset * tick
-    strategy.exit("Short Exit", "Short", limit = tp, stop = sl, comment_profit = "TP", comment_loss = "SL")
+    strategy.exit(tradeId + " Exit", tradeId, limit = tp, stop = sl, comment_profit = "TP", comment_loss = "SL")
 
 if flatAtEnd and inTrade and not nextInTrade and barstate.isconfirmed
     strategy.close_all(comment = "EOD")
@@ -188,6 +237,7 @@ var array<int>   stTime = array.new<int>()
 var array<bool>  stTP   = array.new<bool>()
 var array<bool>  stWin  = array.new<bool>()
 var array<float> stDip  = array.new<float>()
+var array<bool>  stMain = array.new<bool>()   // false = flip trade (excluded from dip averages)
 var int processed = 0
 var int firstTime = time
 
@@ -226,6 +276,7 @@ if barstate.isconfirmed and strategy.closedtrades > processed
         // Same definition as the Strategy Tester's "Profitable trades" (net of commission).
         array.push(stWin, strategy.closedtrades.profit(i) > 0)
         array.push(stDip, dip)
+        array.push(stMain, not str.startswith(strategy.closedtrades.entry_id(i), "Flip"))
     processed := strategy.closedtrades
 
 // Stats for closed trades entered in the last `days` calendar days (days = 0 -> all trades).
@@ -234,22 +285,31 @@ f_stats(int days) =>
     int   n      = 0
     int   nWin   = 0
     int   nTP    = 0
+    int   nMain  = 0
+    int   nMainTP = 0
     float sumTP  = 0.0
     float sumAll = 0.0
     sz = array.size(stTime)
     if sz > 0
         for i = 0 to sz - 1
             if array.get(stTime, i) >= cutoff
-                n      += 1
-                sumAll += array.get(stDip, i)
+                n += 1
+                isMain = array.get(stMain, i)
                 if array.get(stWin, i)
                     nWin += 1
                 if array.get(stTP, i)
-                    nTP   += 1
-                    sumTP += array.get(stDip, i)
+                    nTP += 1
+                if isMain
+                    nMain  += 1
+                    sumAll += array.get(stDip, i)
+                    if array.get(stTP, i)
+                        nMainTP += 1
+                        sumTP   += array.get(stDip, i)
     // "*" = the chart's loaded history is shorter than this window
     partial = days > 0 and firstTime > cutoff
-    [n, nWin, nTP, sumTP, sumAll, partial]
+    avgTP  = nMainTP > 0 ? sumTP / nMainTP : na
+    avgAll = nMain > 0 ? sumAll / nMain : na
+    [n, nWin, nTP, avgTP, avgAll, partial]
 
 f_fmt(float v) => na(v) ? "-" : str.tostring(v, "#.#")
 
@@ -278,8 +338,8 @@ if showStats and barstate.islast
     table.cell(stats, 0, 1, "Trades taken", text_color = txt, text_halign = text.align_left)
     table.cell(stats, 0, 2, "Win % (profitable)", text_color = txt, text_halign = text.align_left)
     table.cell(stats, 0, 3, "% TP", text_color = txt, text_halign = text.align_left)
-    table.cell(stats, 0, 4, "Avg dip beyond line, TP trades (ticks)", text_color = txt, text_halign = text.align_left)
-    table.cell(stats, 0, 5, "Avg dip beyond line, all trades (ticks)", text_color = txt, text_halign = text.align_left)
+    table.cell(stats, 0, 4, "Avg dip beyond line, TP trades (ticks, excl. flips)", text_color = txt, text_halign = text.align_left)
+    table.cell(stats, 0, 5, "Avg dip beyond line, all trades (ticks, excl. flips)", text_color = txt, text_halign = text.align_left)
     for c = 0 to 3
         n  = array.get(ns, c)
         tp = array.get(tps, c)
@@ -287,5 +347,5 @@ if showStats and barstate.islast
         table.cell(stats, c + 1, 1, str.tostring(n), text_color = txt)
         table.cell(stats, c + 1, 2, n > 0 ? str.tostring(100.0 * array.get(ws, c) / n, "#.#") + "%" : "-", text_color = txt)
         table.cell(stats, c + 1, 3, n > 0 ? str.tostring(100.0 * tp / n, "#.#") + "%" : "-", text_color = txt)
-        table.cell(stats, c + 1, 4, f_fmt(tp > 0 ? array.get(sTPs, c) / tp : na), text_color = txt)
-        table.cell(stats, c + 1, 5, f_fmt(n > 0 ? array.get(sAs, c) / n : na), text_color = txt)
+        table.cell(stats, c + 1, 4, f_fmt(array.get(sTPs, c)), text_color = txt)
+        table.cell(stats, c + 1, 5, f_fmt(array.get(sAs, c)), text_color = txt)
