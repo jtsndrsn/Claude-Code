@@ -185,8 +185,10 @@ if barstate.isconfirmed and strategy.closedtrades > processed
         // bar's low (long) / high (short) is after the fill and safe to use.
         worst = isLong ? low[bar_index - eBar] : high[bar_index - eBar]
         if xBar > eBar
-            for b = eBar + 1 to xBar - 1
-                worst := isLong ? math.min(worst, low[bar_index - b]) : math.max(worst, high[bar_index - b])
+            // (Pine for-loops count DOWN if end < start, so guard the empty case)
+            if xBar - eBar > 1
+                for b = eBar + 1 to xBar - 1
+                    worst := isLong ? math.min(worst, low[bar_index - b]) : math.max(worst, high[bar_index - b])
             // Exit bar: only count price from before the exit.
             //  TP    -> skip it (the extreme may come after the TP fill)
             //  stop  -> price can't have gone past the stop before it filled
