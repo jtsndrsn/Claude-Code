@@ -164,10 +164,11 @@ if inTrade and not nextInTrade and barstate.isconfirmed
     rangeDone := false
 
 // ---------- Stats ----------
-// One record per closed trade: exit time, hit TP?, and the dip = how many ticks price went
+// One record per closed trade: entry time, winner?, hit TP?, and the dip = how many ticks price went
 // BEYOND the range line (below the low for longs, above the high for shorts) while in the trade.
 var array<int>   stTime = array.new<int>()
 var array<bool>  stTP   = array.new<bool>()
+var array<bool>  stWin  = array.new<bool>()
 var array<float> stDip  = array.new<float>()
 var int processed = 0
 var int firstTime = time
@@ -200,15 +201,19 @@ if barstate.isconfirmed and strategy.closedtrades > processed
             else if not isTP
                 worst := isLong ? math.min(worst, math.max(xLow, exP)) : math.max(worst, math.min(xHigh, exP))
         dip = isLong ? (rangeLow - worst) / tick : (worst - rangeHigh) / tick
-        array.push(stTime, strategy.closedtrades.exit_time(i))
+        // Windows use ENTRY time, like the Strategy Tester's date range.
+        array.push(stTime, strategy.closedtrades.entry_time(i))
         array.push(stTP, isTP)
+        // Same definition as the Strategy Tester's "Profitable trades" (net of commission).
+        array.push(stWin, strategy.closedtrades.profit(i) > 0)
         array.push(stDip, dip)
     processed := strategy.closedtrades
 
-// Stats for trades that closed in the last `days` calendar days.
+// Stats for closed trades entered in the last `days` calendar days (days = 0 -> all trades).
 f_stats(int days) =>
-    cutoff = time - days * 86400000
+    cutoff = days > 0 ? time - days * 86400000 : 0
     int   n      = 0
+    int   nWin   = 0
     int   nTP    = 0
     float sumTP  = 0.0
     float sumAll = 0.0
@@ -218,12 +223,14 @@ f_stats(int days) =>
             if array.get(stTime, i) >= cutoff
                 n      += 1
                 sumAll += array.get(stDip, i)
+                if array.get(stWin, i)
+                    nWin += 1
                 if array.get(stTP, i)
                     nTP   += 1
                     sumTP += array.get(stDip, i)
     // "*" = the chart's loaded history is shorter than this window
-    partial = firstTime > cutoff
-    [n, nTP, sumTP, sumAll, partial]
+    partial = days > 0 and firstTime > cutoff
+    [n, nWin, nTP, sumTP, sumAll, partial]
 
 f_fmt(float v) => na(v) ? "-" : str.tostring(v, "#.#")
 
@@ -233,29 +240,33 @@ statsPos = switch statsPosStr
     "Bottom left"  => position.bottom_left
     => position.top_right
 
-var table stats = table.new(statsPos, 4, 5, bgcolor = color.new(color.black, 20), border_color = color.gray, border_width = 1, frame_color = color.gray, frame_width = 1)
+var table stats = table.new(statsPos, 5, 6, bgcolor = color.new(color.black, 20), border_color = color.gray, border_width = 1, frame_color = color.gray, frame_width = 1)
 
 if showStats and barstate.islast
-    [n7,  tp7,  sTP7,  sA7,  p7 ] = f_stats(7)
-    [n30, tp30, sTP30, sA30, p30] = f_stats(30)
-    [n90, tp90, sTP90, sA90, p90] = f_stats(90)
-    ns   = array.from(n7, n30, n90)
-    tps  = array.from(tp7, tp30, tp90)
-    sTPs = array.from(sTP7, sTP30, sTP90)
-    sAs  = array.from(sA7, sA30, sA90)
-    ps   = array.from(p7, p30, p90)
-    hdrs = array.from("7 days", "30 days", "90 days")
+    [n7,  w7,  tp7,  sTP7,  sA7,  p7 ] = f_stats(7)
+    [n30, w30, tp30, sTP30, sA30, p30] = f_stats(30)
+    [n90, w90, tp90, sTP90, sA90, p90] = f_stats(90)
+    [nAl, wAl, tpAl, sTPAl, sAAl, pAl] = f_stats(0)
+    ns   = array.from(n7, n30, n90, nAl)
+    ws   = array.from(w7, w30, w90, wAl)
+    tps  = array.from(tp7, tp30, tp90, tpAl)
+    sTPs = array.from(sTP7, sTP30, sTP90, sTPAl)
+    sAs  = array.from(sA7, sA30, sA90, sAAl)
+    ps   = array.from(p7, p30, p90, pAl)
+    hdrs = array.from("7 days", "30 days", "90 days", "All")
     txt  = color.white
     table.cell(stats, 0, 0, "Metric", text_color = txt, text_halign = text.align_left)
     table.cell(stats, 0, 1, "Trades taken", text_color = txt, text_halign = text.align_left)
-    table.cell(stats, 0, 2, "% TP", text_color = txt, text_halign = text.align_left)
-    table.cell(stats, 0, 3, "Avg dip beyond line, TP trades (ticks)", text_color = txt, text_halign = text.align_left)
-    table.cell(stats, 0, 4, "Avg dip beyond line, all trades (ticks)", text_color = txt, text_halign = text.align_left)
-    for c = 0 to 2
+    table.cell(stats, 0, 2, "Win % (profitable)", text_color = txt, text_halign = text.align_left)
+    table.cell(stats, 0, 3, "% TP", text_color = txt, text_halign = text.align_left)
+    table.cell(stats, 0, 4, "Avg dip beyond line, TP trades (ticks)", text_color = txt, text_halign = text.align_left)
+    table.cell(stats, 0, 5, "Avg dip beyond line, all trades (ticks)", text_color = txt, text_halign = text.align_left)
+    for c = 0 to 3
         n  = array.get(ns, c)
         tp = array.get(tps, c)
         table.cell(stats, c + 1, 0, array.get(hdrs, c) + (array.get(ps, c) ? "*" : ""), text_color = txt)
         table.cell(stats, c + 1, 1, str.tostring(n), text_color = txt)
-        table.cell(stats, c + 1, 2, n > 0 ? str.tostring(100.0 * tp / n, "#.#") + "%" : "-", text_color = txt)
-        table.cell(stats, c + 1, 3, f_fmt(tp > 0 ? array.get(sTPs, c) / tp : na), text_color = txt)
-        table.cell(stats, c + 1, 4, f_fmt(n > 0 ? array.get(sAs, c) / n : na), text_color = txt)
+        table.cell(stats, c + 1, 2, n > 0 ? str.tostring(100.0 * array.get(ws, c) / n, "#.#") + "%" : "-", text_color = txt)
+        table.cell(stats, c + 1, 3, n > 0 ? str.tostring(100.0 * tp / n, "#.#") + "%" : "-", text_color = txt)
+        table.cell(stats, c + 1, 4, f_fmt(tp > 0 ? array.get(sTPs, c) / tp : na), text_color = txt)
+        table.cell(stats, c + 1, 5, f_fmt(n > 0 ? array.get(sAs, c) / n : na), text_color = txt)
