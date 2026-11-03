@@ -9,9 +9,9 @@ Runs the TradingView strategy `strategies/porr.pine` (v1.0) automatically on Web
 | Strategy engine (range, entries, TP/SL, breakeven, trend TP, flip, end-of-day close, max trades) | Done, unit-tested |
 | Replay backtest from TradingView CSV export | Done |
 | Paper broker (simulated fills) | Done |
-| Webull orders (place / replace stop / cancel) | Written from Webull's docs, **not yet tested against Webull** |
-| Webull fill events | Written, payload field names **must be checked in the sandbox** |
-| Webull live futures prices / 1-min bars | **Not wired up**: needs Webull's paid OpenAPI futures market-data subscription, plus the exact SDK call |
+| Webull live futures prices / 1-min bars | Done. Real-time MNQZ6 data confirmed on the account; bars match TradingView exactly |
+| Webull orders (place / replace stop / cancel) | Uses SDK calls confirmed to exist; **not yet run against Webull** |
+| Webull fill detection | Push events + order-detail polling; response field names **must be checked in the sandbox** |
 
 **Do not trade real money with this yet.** Order of rollout: replay → sandbox → paper (live prices, simulated fills) → live with 1 contract.
 

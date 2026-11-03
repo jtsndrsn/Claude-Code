@@ -100,10 +100,11 @@ class WebullBroker:
     limit_price, quantity, side, time_in_force, entrust_type QTY, combo_type NORMAL), and the
     TradeEventsClient order-status stream.
 
+    Confirmed from the SDK's own samples: "SELL" side and "stop_price" for STOP_LOSS orders
+    (equity samples), get_order_detail for polling.
+
     NOT verified (test in the sandbox before going live) - marked VERIFY below:
-      * side "SELL" to open a short / close a long on futures
-      * "stop_price" as the field name for STOP_LOSS orders when placing
-      * the order-status event payload field names used in _parse_event()
+      * the order-status event / order-detail field names used in _parse_event()
     """
 
     def __init__(self, app_key: str, app_secret: str, account_id: str, symbol: str,
@@ -116,7 +117,11 @@ class WebullBroker:
         self.account_id = account_id
         api = ApiClient(app_key, app_secret, region)
         api.add_endpoint(region, "api.sandbox.webull.com" if sandbox else "api.webull.com")
+        self.api_client = api
         self.trade = TradeClient(api)
+        self.open_ids: list[str] = []                # working orders, polled round-robin
+        self._seen_detail = False
+        self._done: set[str] = set()
         self.tags: dict[str, str] = {}               # client_order_id -> engine tag
         self.sides: dict[str, str] = {}
         self.qtys: dict[str, int] = {}
@@ -138,7 +143,7 @@ class WebullBroker:
             "market": "US",
             "order_type": order_type,
             "quantity": str(qty),
-            "side": side,                            # VERIFY "SELL" for futures
+            "side": side,
             "time_in_force": "DAY",
             "entrust_type": "QTY",
             **{k: str(v) for k, v in prices.items()},
@@ -147,6 +152,7 @@ class WebullBroker:
         res = self.trade.order_v3.place_order(self.account_id, [order])
         if res.status_code != 200:
             raise RuntimeError(f"place_order failed {res.status_code}: {res.text}")
+        self.open_ids.append(coid)
         log.info("Webull placed %s %s %s %s %s", tag, side, qty, order_type, prices)
         return coid
 
@@ -154,7 +160,7 @@ class WebullBroker:
         return self._place(tag, side, qty, "LIMIT", limit_price=price)
 
     def place_stop(self, tag, side, qty, stop):
-        return self._place(tag, side, qty, "STOP_LOSS", stop_price=stop)   # VERIFY field name
+        return self._place(tag, side, qty, "STOP_LOSS", stop_price=stop)
 
     def place_market(self, tag, side, qty):
         return self._place(tag, side, qty, "MARKET")
@@ -167,6 +173,8 @@ class WebullBroker:
             raise RuntimeError(f"replace_order failed {res.status_code}: {res.text}")
 
     def cancel(self, order_id):
+        if order_id in self.open_ids:
+            self.open_ids.remove(order_id)
         res = self.trade.order_v3.cancel_order(self.account_id, order_id)
         if res.status_code != 200:
             log.warning("cancel_order %s -> %s %s", order_id, res.status_code, res.text)
@@ -175,7 +183,8 @@ class WebullBroker:
     def _on_event(self, event_type, subscribe_type, payload, raw_message):
         try:
             fill = self._parse_event(payload)
-            if fill:
+            if fill and fill.order_id not in self._done:
+                self._done.add(fill.order_id)
                 self._fills.put(fill)
         except Exception:                            # never kill the stream thread
             log.exception("Could not parse order event: %s", raw_message)
@@ -185,6 +194,8 @@ class WebullBroker:
         log.debug("order event: %s", payload)
         p = payload if isinstance(payload, dict) else getattr(payload, "__dict__", {})
         coid = p.get("client_order_id")
+        if coid in self._done:
+            return None
         status = str(p.get("order_status") or p.get("status") or "").upper()
         if coid not in self.tags or status != "FILLED":
             return None
@@ -192,8 +203,48 @@ class WebullBroker:
         qty = int(float(p.get("filled_quantity") or p.get("filled_qty") or self.qtys[coid]))
         return Fill(coid, self.tags[coid], self.sides[coid], qty, price, datetime.now().astimezone())
 
+    def _poll_one(self) -> None:
+        """Fallback if a push event is missed: check ONE working order per call (Order Detail is
+        rate-limited to 2 requests / 2 s), rotating through the working orders."""
+        if not self.open_ids:
+            return
+        coid = self.open_ids.pop(0)
+        self.open_ids.append(coid)
+        res = self.trade.order_v3.get_order_detail(self.account_id, coid)
+        if res.status_code != 200:
+            return
+        data = res.json()
+        if not self._seen_detail:                    # VERIFY: log the real shape once
+            log.info("order detail sample: %s", data)
+            self._seen_detail = True
+        fill = self._parse_event(_find_order(data, coid) or {})
+        if fill and coid not in self._done:
+            self._done.add(coid)
+            self._fills.put(fill)
+
     def poll_fills(self) -> list[Fill]:
+        try:
+            self._poll_one()
+        except Exception:
+            log.exception("order detail poll failed")
         out = []
         while not self._fills.empty():
-            out.append(self._fills.get_nowait())
+            f = self._fills.get_nowait()
+            if f.order_id in self.open_ids:
+                self.open_ids.remove(f.order_id)
+            out.append(f)
         return out
+
+
+def _find_order(obj, coid):
+    """Return the dict inside `obj` that carries this client_order_id (response shape unverified)."""
+    if isinstance(obj, dict):
+        if obj.get("client_order_id") == coid:
+            return obj
+        obj = list(obj.values())
+    if isinstance(obj, list):
+        for v in obj:
+            hit = _find_order(v, coid)
+            if hit:
+                return hit
+    return None

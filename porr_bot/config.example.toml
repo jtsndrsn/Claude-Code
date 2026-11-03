@@ -31,7 +31,7 @@ entry_delay     = 0
 trade_log       = "trades.csv"
 
 [webull]
-account_id   = "YOUR_ACCOUNT_ID"
+account_id   = "YOUR_FUTURES_ACCOUNT_ID"   # the account labelled "Futures"
 sandbox      = true        # true = Webull test environment. Set false only after sandbox testing.
 paper        = true        # true = live prices, simulated fills (no orders sent). Set false to send orders.
-poll_seconds = 1.0
+poll_seconds = 2.0         # price poll interval

@@ -15,7 +15,7 @@ import sys
 import time as _time
 import tomllib
 from dataclasses import fields
-from datetime import datetime, time
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from broker import PaperBroker
@@ -71,12 +71,19 @@ def live(cfg: Config, raw: dict, tz: str) -> None:
 
     real = WebullBroker(key, secret, wb["account_id"], cfg.symbol, sandbox=sandbox)
     broker = PaperBroker(cfg.tick) if paper else real
-    feed = WebullFeed(real.trade, cfg.symbol)
+    feed = WebullFeed(real.api_client, cfg.symbol, tz)
     eng = Engine(cfg, broker)
-    zone = ZoneInfo(tz)
-    poll = float(wb.get("poll_seconds", 1.0))
-    last_bar = datetime.now(zone).replace(second=0, microsecond=0)
+    poll = float(wb.get("poll_seconds", 2.0))
     stop_file = os.path.join(HERE, "STOP")
+
+    # Warm up: last ~20 hours of 1-minute bars rebuild today's range and the trend EMA.
+    # NOTE: trades already taken today (before a restart) are not known to the engine.
+    warm = feed.closed_bars_since(None, count=WebullFeed.MAX_BARS)
+    for bar in warm:
+        eng.on_bar(bar)
+    next_bar = warm[-1].end if warm else datetime.now(ZoneInfo(tz)).replace(second=0, microsecond=0)
+    log.info("Warm-up: %d bars, range_done=%s high=%s low=%s", len(warm), eng.range_done,
+             eng.range_high, eng.range_low)
 
     while True:
         if os.path.exists(stop_file):
@@ -85,18 +92,22 @@ def live(cfg: Config, raw: dict, tz: str) -> None:
             if eng.pos:
                 eng._flatten("EOD")
             break
-        now = datetime.now(zone)
-        for bar in feed.closed_bars_since(last_bar):
-            eng.on_bar(bar)
-            last_bar = bar.end
-        px = feed.last_price()
-        if paper:
-            broker.on_price(now, px)
-        for f in broker.poll_fills():
-            eng.on_fill(f)
-        eng.on_price(now, px)
-        for f in broker.poll_fills():
-            eng.on_fill(f)
+        try:
+            now = datetime.now(ZoneInfo(tz))
+            if now >= next_bar + timedelta(minutes=1, seconds=2):   # a new bar has closed
+                for bar in feed.closed_bars_since(next_bar):
+                    eng.on_bar(bar)
+                    next_bar = bar.end
+            px = feed.last_price()
+            if paper:
+                broker.on_price(now, px)
+            for f in broker.poll_fills():
+                eng.on_fill(f)
+            eng.on_price(now, px)
+            for f in broker.poll_fills():
+                eng.on_fill(f)
+        except Exception:
+            log.exception("loop error (will retry)")
         _time.sleep(poll)
 
 

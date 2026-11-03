@@ -1,0 +1,36 @@
+140377210230592 2026-11-03 19:45:02,557 webull.core.client ERROR ServerException occurred. Host:api.sandbox.webull.com SDK-Version:3.0.4 Request:{
+  "_version": "v3",
+  "_action_name": "/openapi/config",
+  "_protocol_type": "https",
+  "_accept_format": "JSON",
+  "_params": {},
+  "_method": "GET",
+  "_header": {
+    "x-version": "v3",
+    "Accept-Encoding": "gzip",
+    "x-app-key": "k",
+    "x-timestamp": "2026-11-03T19:45:02Z",
+    "x-signature-version": "1.0",
+    "x-signature-algorithm": "HMAC-SHA256",
+    "x-signature-nonce": "35199d24-30ce-5edf-94f6-5cb1794f9505",
+    "x-signature": "RaAqL+hsAqk8r2vQzJkpylbhhmKhQ47VdH+Kk/41Dj8=",
+    "User-Agent": "WebullApiSDK (Linux 6.18.44-fc-v230;x86_64) Python/3.13.18 Core/3.0.4 python-requests/2.34.2",
+    "x-webull-client-source": "sdk"
+  },
+  "_body_params": null,
+  "_uri_pattern": null,
+  "_uri_params": null,
+  "_content": null,
+  "_extra_user_agent": {},
+  "string_to_sign": "",
+  "_request_connect_timeout": null,
+  "_request_read_timeout": null,
+  "endpoint": "api.sandbox.webull.com",
+  "_signer_spec": "<module 'webull.core.auth.algorithm.sha_hmac1' from '/tmp/claude-0/-home-user-Claude-Code/5e83bea1-15df-515d-8b9d-19cf28b4057a/scratchpad/v/lib/python3.13/site-packages/webull/core/auth/algorithm/sha_hmac1.py'>"
+} Response:{'error_code': 'UNAUTHORIZED', 'message': 'Invalid credentials. Please verify your credentials and ensure you are connecting to the correct environment'} ServerException:HTTP Status: 401, Code: UNAUTHORIZED, Msg: Invalid credentials. Please verify your credentials and ensure you are connecting to the correct environment, RequestID: 3e372c72-815d-46dc-bb7d-463f38372123
+140377210230592 2026-11-03 19:45:02,557 webull.core.client ERROR get_response exception. {
+  "error_code": "UNAUTHORIZED",
+  "error_msg": "Invalid credentials. Please verify your credentials and ensure you are connecting to the correct environment",
+  "http_status": 401,
+  "request_id": "3e372c72-815d-46dc-bb7d-463f38372123"
+}

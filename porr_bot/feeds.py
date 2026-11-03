@@ -2,11 +2,7 @@
 
   CsvReplayFeed - replays 1-minute bars exported from TradingView (for testing the engine and
                   comparing it with the Pine strategy).
-  WebullFeed    - live futures data from Webull OpenAPI. NOT FINISHED: Webull's docs list the
-                  endpoints (GET /market-data/futures/snapshots/list and
-                  /market-data/futures/bars/list) but not the SDK method names / parameters,
-                  and futures data needs a paid OpenAPI market-data subscription. Fill in the two
-                  methods once the subscription is active and the parameters are confirmed.
+  WebullFeed    - live futures snapshot + 1-minute bars from Webull OpenAPI.
 """
 from __future__ import annotations
 
@@ -47,15 +43,39 @@ def bar_ticks(bar: Bar):
 
 
 class WebullFeed:
-    """Live Webull futures data. TODO once the futures market-data subscription is active."""
+    """Live Webull futures data via the official SDK (DataClient.futures_market_data).
 
-    def __init__(self, api_client, symbol: str):
-        self.api, self.symbol = api_client, symbol
+    Confirmed working on this account: real-time (delay_minutes 0) snapshot and 1-minute bars for
+    MNQZ6, and the bars match the TradingView export to the tick.
+    """
+
+    MAX_BARS = 1200          # API limit per request
+
+    def __init__(self, api_client, symbol: str, tz: str = "America/Chicago"):
+        from webull.data.data_client import DataClient
+        self.md = DataClient(api_client).futures_market_data
+        self.symbol, self.tz = symbol, ZoneInfo(tz)
 
     def last_price(self) -> float:
-        # GET /market-data/futures/snapshots/list  (SDK method / params to be confirmed)
-        raise NotImplementedError("Webull futures snapshot call not wired up yet")
+        res = self.md.get_futures_snapshot(self.symbol, "US_FUTURES")
+        if res.status_code != 200:
+            raise RuntimeError(f"snapshot failed {res.status_code}: {res.text}")
+        return float(res.json()[0]["price"])
 
-    def closed_bars_since(self, after: datetime) -> list[Bar]:
-        # GET /market-data/futures/bars/list  (1-minute bars; SDK method / params to be confirmed)
-        raise NotImplementedError("Webull futures bars call not wired up yet")
+    def closed_bars_since(self, after: datetime | None, count: int | None = None) -> list[Bar]:
+        """Completed 1-minute bars with start >= `after`, oldest first."""
+        now = datetime.now(self.tz)
+        if count is None:
+            mins = 5 if after is None else int((now - after).total_seconds() // 60) + 2
+            count = max(2, min(self.MAX_BARS, mins))
+        res = self.md.get_futures_history_bars(self.symbol, "US_FUTURES", "M1", count=str(count))
+        if res.status_code != 200:
+            raise RuntimeError(f"bars failed {res.status_code}: {res.text}")
+        out = []
+        for b in res.json()[0]["result"]:
+            start = datetime.strptime(b["time"], "%Y-%m-%dT%H:%M:%S.%f%z").astimezone(self.tz)
+            bar = Bar(start, float(b["open"]), float(b["high"]), float(b["low"]), float(b["close"]))
+            if bar.end <= now and (after is None or start >= after):   # skip the bar still forming
+                out.append(bar)
+        out.sort(key=lambda x: x.start)
+        return out
