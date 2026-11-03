@@ -45,8 +45,8 @@ class EngineTest(unittest.TestCase):
         broker = PaperBroker(cfg.tick)
         eng = Engine(cfg, broker)
         for bar in bars:
-            for px in bar_ticks(bar):
-                broker.on_price(bar.start, px)
+            for i, px in enumerate(bar_ticks(bar)):
+                broker.on_price(bar.start, px, gap=(i == 0))
                 for f in broker.poll_fills():
                     eng.on_fill(f)
                 eng.on_price(bar.start, px)

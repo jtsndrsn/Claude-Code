@@ -65,8 +65,13 @@ class PaperBroker:
     def cancel(self, order_id):
         self.orders.pop(order_id, None)
 
-    def on_price(self, ts: datetime, price: float) -> None:
-        """Advance the simulation to a new price; fills are collected for poll_fills()."""
+    def on_price(self, ts: datetime, price: float, gap: bool = True) -> None:
+        """Advance the simulation to a new price; fills are collected for poll_fills().
+
+        gap=False means price moved continuously from the previous price (simulated path inside
+        a bar), so a stop fills AT its stop price. gap=True (default, e.g. a bar open or a live
+        price jump) fills a stop at the new price, i.e. with slippage.
+        """
         self.last, self.ts = price, ts
         for oid, o in list(self.orders.items()):
             buy = o["side"] == "BUY"
@@ -76,7 +81,7 @@ class PaperBroker:
                 fill_px = px
             else:  # STOP
                 hit = price >= px if buy else price <= px
-                fill_px = price
+                fill_px = price if gap else px
             if hit:
                 del self.orders[oid]
                 self._pending.append(Fill(oid, o["tag"], o["side"], o["qty"], fill_px, ts))
