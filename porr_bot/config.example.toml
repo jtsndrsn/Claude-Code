@@ -1,0 +1,37 @@
+# Copy to config.toml and edit.  API keys are NOT stored here:
+# set the environment variables WEBULL_APP_KEY and WEBULL_APP_SECRET instead.
+
+[strategy]                 # same settings as the TradingView v1.0 inputs
+symbol          = "MNQZ6"  # Webull contract code: product + month letter + 1-digit year (Z6 = Dec 2026). Roll each quarter!
+tick            = 0.25
+range_start     = "07:30"  # America/Chicago
+range_end       = "08:30"
+trade_start     = "08:30"
+trade_end       = "15:00"
+flat_at_end     = true
+tp_ticks        = 500
+sl_ticks        = 100
+use_be          = true
+be_trigger      = 100
+be_offset       = 3
+use_trend_tp    = false
+tp_trend_ticks  = 400
+trend_minutes   = 15
+trend_len       = 50
+use_flip        = false
+flip_tp         = 200
+flip_sl         = 100
+contracts       = 1
+max_contracts_cap = 1      # hard safety cap per order - raise deliberately
+max_trades      = 5
+one_per_level   = true
+allow_long      = true
+allow_short     = true
+entry_delay     = 0
+trade_log       = "trades.csv"
+
+[webull]
+account_id   = "YOUR_ACCOUNT_ID"
+sandbox      = true        # true = Webull test environment. Set false only after sandbox testing.
+paper        = true        # true = live prices, simulated fills (no orders sent). Set false to send orders.
+poll_seconds = 1.0

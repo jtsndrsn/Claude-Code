@@ -1,0 +1,4 @@
+config.toml
+trades.csv
+STOP
+__pycache__/
