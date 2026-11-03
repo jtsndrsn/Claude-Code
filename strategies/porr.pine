@@ -68,16 +68,15 @@ else if inRange
     rangeHigh := math.max(rangeHigh, high)
     rangeLow  := math.min(rangeLow, low)
 
-// Range is final at the close of its last bar
-if inRange and not nextInRange
+// Range is final at the close of its last bar.
+// barstate.isconfirmed: with "On history bar tick" enabled the script also runs inside each
+// bar, so anything that must happen at a bar's CLOSE is gated on the bar being confirmed.
+if inRange and not nextInRange and barstate.isconfirmed
     rangeDone := true
 
 // ---------- Track fills ----------
 totalTrades = strategy.closedtrades + strategy.opentrades
 newTrade    = totalTrades > nz(totalTrades[1])
-var float mfeHigh = na
-var float mfeLow  = na
-
 if newTrade
     tradesToday += totalTrades - nz(totalTrades[1])
     lastSize = strategy.opentrades > 0 ? strategy.opentrades.size(strategy.opentrades - 1) : strategy.closedtrades.size(strategy.closedtrades - 1)
@@ -85,13 +84,6 @@ if newTrade
         longUsed := true
     else
         shortUsed := true
-    // Start excursion tracking at the fill price, not the entry bar's high/low
-    // (those can include price from before the fill and falsely trigger breakeven).
-    mfeHigh := strategy.position_avg_price
-    mfeLow  := strategy.position_avg_price
-else if strategy.position_size != 0
-    mfeHigh := math.max(mfeHigh, high)
-    mfeLow  := math.min(mfeLow, low)
 
 // ---------- Entries ----------
 flat       = strategy.position_size == 0
@@ -115,21 +107,37 @@ else
     strategy.cancel("Short")
 
 // ---------- Exits / breakeven ----------
+// Best price reached since the fill. With "On history bar tick" on, this updates on every
+// simulated tick inside the bar, so the stop moves to breakeven intrabar (not at bar close).
 entryPx = strategy.position_avg_price
+var float bestHigh = na
+var float bestLow  = na
+if strategy.position_size != 0
+    entryBar = strategy.opentrades.entry_bar_index(strategy.opentrades - 1)
+    if bar_index == entryBar
+        // On the entry bar the high/low may include price from BEFORE the fill. They are only
+        // safe to use if the bar opened through the level (limit filled at the open);
+        // otherwise use the current price, which is always after the fill.
+        bestHigh := open <= entryPx ? high : math.max(entryPx, close)
+        bestLow  := open >= entryPx ? low  : math.min(entryPx, close)
+    else
+        bestHigh := math.max(bestHigh, high)
+        bestLow  := math.min(bestLow, low)
+
 if strategy.position_size > 0
     tp = entryPx + tpTicks * tick
     sl = entryPx - slTicks * tick
-    if useBE and mfeHigh >= entryPx + beTrigger * tick
+    if useBE and bestHigh >= entryPx + beTrigger * tick
         sl := entryPx + beOffset * tick
     strategy.exit("Long Exit", "Long", limit = tp, stop = sl)
 else if strategy.position_size < 0
     tp = entryPx - tpTicks * tick
     sl = entryPx + slTicks * tick
-    if useBE and mfeLow <= entryPx - beTrigger * tick
+    if useBE and bestLow <= entryPx - beTrigger * tick
         sl := entryPx - beOffset * tick
     strategy.exit("Short Exit", "Short", limit = tp, stop = sl)
 
-if flatAtEnd and inTrade and not nextInTrade
+if flatAtEnd and inTrade and not nextInTrade and barstate.isconfirmed
     strategy.close_all(comment = "EOD")
 
 // ---------- Visuals ----------
@@ -145,5 +153,5 @@ plot(posLong or posShort ? entryPx : na, "Entry", color.gray, 1, plot.style_line
 // ---------- End of day ----------
 // Retire the day's levels when the trade window closes, so a day with no range bars
 // (holiday / missing data) can't trade off yesterday's stale levels.
-if inTrade and not nextInTrade
+if inTrade and not nextInTrade and barstate.isconfirmed
     rangeDone := false
