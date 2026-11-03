@@ -1,0 +1,149 @@
+//@version=6
+// Pre-Open Range Reversal
+// Marks the high/low of the hour before the cash open (default 07:30-08:30 Central,
+// i.e. Oklahoma time) and fades the first touch of either level after the open:
+//   touch range HIGH -> short, touch range LOW -> long.
+// Fixed TP/SL in ticks, with an optional move-stop-to-breakeven once price runs
+// a set number of ticks in your favor.
+// Use a 1-5 minute chart so the 07:30 / 08:30 boundaries line up with bar opens.
+strategy("Pre-Open Range Reversal", shorttitle = "PORR", overlay = true,
+     initial_capital = 50000, default_qty_type = strategy.fixed, default_qty_value = 1,
+     margin_long = 0, margin_short = 0,
+     commission_type = strategy.commission.cash_per_contract, commission_value = 0.7,
+     // Limits must trade 1 tick THROUGH the level to fill (a bare touch is not a guaranteed fill).
+     backtest_fill_limits_assumption = 1,
+     // Use lower-timeframe data to resolve fills inside each chart bar (needs Premium+ plan).
+     use_bar_magnifier = true)
+
+// ---------- Inputs ----------
+grpS = "Sessions"
+tz        = input.string("America/Chicago", "Time zone", group = grpS, tooltip = "Oklahoma = America/Chicago (Central)")
+rangeSess = input.session("0730-0830", "Range window (mark high/low)", group = grpS)
+tradeSess = input.session("0830-1500", "Trade window (look for touches)", group = grpS)
+flatAtEnd = input.bool(true, "Flatten open trade at end of trade window", group = grpS)
+
+grpR = "Risk (ticks)"
+tpTicks   = input.int(500, "Take profit (ticks)", minval = 1, group = grpR)
+slTicks   = input.int(100, "Stop loss (ticks)", minval = 1, group = grpR)
+useBE     = input.bool(true, "Use breakeven stop", group = grpR)
+beTrigger = input.int(100, "Breakeven trigger (ticks in profit)", minval = 1, group = grpR)
+beOffset  = input.int(3, "Breakeven offset (ticks beyond entry)", group = grpR, tooltip = "0 = stop exactly at entry. 3 = lock in 3 ticks.")
+
+grpT = "Trade rules"
+contracts   = input.int(10, "Contracts per trade", minval = 1, group = grpT)
+maxTrades   = input.int(5, "Max trades per day", minval = 1, group = grpT)
+onePerLevel = input.bool(true, "Only one trade per level per day", group = grpT)
+allowLong   = input.bool(true, "Take longs (range low touch)", group = grpT)
+allowShort  = input.bool(true, "Take shorts (range high touch)", group = grpT)
+
+grpV = "Visuals"
+showLevels = input.bool(true, "Show range lines", group = grpV)
+showRangeBg = input.bool(true, "Shade range window", group = grpV)
+
+// ---------- Session state ----------
+tick    = syminfo.mintick
+inRange = not na(time(timeframe.period, rangeSess, tz))
+inTrade = not na(time(timeframe.period, tradeSess, tz))
+// Orders placed at a bar's close work on the NEXT bar, so gate them on the next bar's session.
+// This lets the limits rest from the 08:30 open instead of one bar late.
+nextInRange = not na(time(timeframe.period, rangeSess, tz, -1))
+nextInTrade = not na(time(timeframe.period, tradeSess, tz, -1))
+
+var float rangeHigh = na
+var float rangeLow  = na
+var bool  rangeDone = false
+var int   tradesToday = 0
+var bool  longUsed  = false
+var bool  shortUsed = false
+
+if inRange and not inRange[1]
+    // New day's range starts: reset everything
+    rangeHigh   := high
+    rangeLow    := low
+    rangeDone   := false
+    tradesToday := 0
+    longUsed    := false
+    shortUsed   := false
+else if inRange
+    rangeHigh := math.max(rangeHigh, high)
+    rangeLow  := math.min(rangeLow, low)
+
+// Range is final at the close of its last bar
+if inRange and not nextInRange
+    rangeDone := true
+
+// ---------- Track fills ----------
+totalTrades = strategy.closedtrades + strategy.opentrades
+newTrade    = totalTrades > nz(totalTrades[1])
+var float mfeHigh = na
+var float mfeLow  = na
+
+if newTrade
+    tradesToday += totalTrades - nz(totalTrades[1])
+    lastSize = strategy.opentrades > 0 ? strategy.opentrades.size(strategy.opentrades - 1) : strategy.closedtrades.size(strategy.closedtrades - 1)
+    if lastSize > 0
+        longUsed := true
+    else
+        shortUsed := true
+    // Start excursion tracking at the fill price, not the entry bar's high/low
+    // (those can include price from before the fill and falsely trigger breakeven).
+    mfeHigh := strategy.position_avg_price
+    mfeLow  := strategy.position_avg_price
+else if strategy.position_size != 0
+    mfeHigh := math.max(mfeHigh, high)
+    mfeLow  := math.min(mfeLow, low)
+
+// ---------- Entries ----------
+flat       = strategy.position_size == 0
+canTrade   = rangeDone and nextInTrade and flat and tradesToday < maxTrades and not na(rangeHigh) and not na(rangeLow)
+// Only rest a limit when price is on the correct side of the level, so it fills on a touch
+// rather than instantly at market (e.g. re-arming after being stopped out beyond the level).
+longReady  = canTrade and allowLong  and not (onePerLevel and longUsed)  and close > rangeLow
+shortReady = canTrade and allowShort and not (onePerLevel and shortUsed) and close < rangeHigh
+
+// Resting limit orders at the levels = "touch" entries. OCA so only one side fills.
+if longReady
+    strategy.entry("Long", strategy.long, qty = contracts, limit = rangeLow, oca_name = "porr", oca_type = strategy.oca.cancel)
+    strategy.exit("Long Exit", "Long", profit = tpTicks, loss = slTicks)
+else
+    strategy.cancel("Long")
+
+if shortReady
+    strategy.entry("Short", strategy.short, qty = contracts, limit = rangeHigh, oca_name = "porr", oca_type = strategy.oca.cancel)
+    strategy.exit("Short Exit", "Short", profit = tpTicks, loss = slTicks)
+else
+    strategy.cancel("Short")
+
+// ---------- Exits / breakeven ----------
+entryPx = strategy.position_avg_price
+if strategy.position_size > 0
+    tp = entryPx + tpTicks * tick
+    sl = entryPx - slTicks * tick
+    if useBE and mfeHigh >= entryPx + beTrigger * tick
+        sl := entryPx + beOffset * tick
+    strategy.exit("Long Exit", "Long", limit = tp, stop = sl)
+else if strategy.position_size < 0
+    tp = entryPx - tpTicks * tick
+    sl = entryPx + slTicks * tick
+    if useBE and mfeLow <= entryPx - beTrigger * tick
+        sl := entryPx - beOffset * tick
+    strategy.exit("Short Exit", "Short", limit = tp, stop = sl)
+
+if flatAtEnd and inTrade and not nextInTrade
+    strategy.close_all(comment = "EOD")
+
+// ---------- Visuals ----------
+showLine = showLevels and rangeDone and inTrade
+plot(showLine ? rangeHigh : na, "Range High", color.red, 2, plot.style_linebr)
+plot(showLine ? rangeLow  : na, "Range Low", color.green, 2, plot.style_linebr)
+bgcolor(showRangeBg and inRange ? color.new(color.blue, 88) : na, title = "Range window")
+
+posLong  = strategy.position_size > 0
+posShort = strategy.position_size < 0
+plot(posLong or posShort ? entryPx : na, "Entry", color.gray, 1, plot.style_linebr)
+
+// ---------- End of day ----------
+// Retire the day's levels when the trade window closes, so a day with no range bars
+// (holiday / missing data) can't trade off yesterday's stale levels.
+if inTrade and not nextInTrade
+    rangeDone := false
