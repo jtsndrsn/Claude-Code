@@ -1,5 +1,5 @@
 //@version=6
-// Pre-Open Range Reversal
+// Pre-Open Range Reversal  -  Version 1.0
 // Marks the high/low of the hour before the cash open (default 07:30-08:30 Central,
 // i.e. Oklahoma time) and fades the first touch of either level after the open:
 //   touch range HIGH -> short, touch range LOW -> long.
