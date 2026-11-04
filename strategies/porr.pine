@@ -1,5 +1,6 @@
 //@version=6
-// Pre-Open Range Reversal  -  Version 1.1
+// Pre-Open Range Reversal  -  Version 1.2
+// v1.2: range-size label, dashed mid-range line, optional TP at the opposite range line.
 // v1.1 defaults: TP 400 / SL 400, no breakeven, entry delay 24, 1 contract, max 4 trades,
 //   trend TP 600 on 1h EMA50 (off), flip 100/100 (off).
 // Marks the high/low of the hour before the cash open (default 07:30-08:30 Central,
@@ -19,7 +20,8 @@ strategy("Pre-Open Range Reversal", shorttitle = "PORR", overlay = true,
      // Use lower-timeframe data to resolve fills inside each chart bar (needs Premium+ plan).
      use_bar_magnifier = true,
      // Stats loop looks back over each trade's bars.
-     max_bars_back = 2000)
+     max_bars_back = 2000,
+     max_lines_count = 500, max_labels_count = 500)
 
 // ---------- Inputs ----------
 grpS = "Sessions"
@@ -34,6 +36,8 @@ slTicks   = input.int(400, "Stop loss (ticks)", minval = 1, group = grpR)
 useBE     = input.bool(false, "Use breakeven stop", group = grpR)
 beTrigger = input.int(100, "Breakeven trigger (ticks in profit)", minval = 1, group = grpR)
 beOffset  = input.int(3, "Breakeven offset (ticks beyond entry)", group = grpR, tooltip = "0 = stop exactly at entry. 3 = lock in 3 ticks.")
+
+useLineTP = input.bool(false, "TP at the opposite range line", group = grpR, tooltip = "Overrides the take profit ticks (and the trend TP): longs from the range LOW take profit at the range HIGH, shorts from the range HIGH take profit at the range LOW, expecting the far line to act as resistance/support. Flip trades keep their own flip TP.")
 
 grpF = "Trend filter (take profit)"
 useTrendTP   = input.bool(false, "Use bigger TP on with-trend trades", group = grpF, tooltip = "Longs in an uptrend and shorts in a downtrend use the with-trend TP. Counter-trend trades keep the normal TP.")
@@ -58,6 +62,8 @@ entryDelay  = input.int(24, "Entry delay (ticks beyond line)", minval = 0, group
 grpV = "Visuals"
 showLevels = input.bool(true, "Show range lines", group = grpV)
 showRangeBg = input.bool(true, "Shade range window", group = grpV)
+showMid     = input.bool(true, "Show mid-range line (dashed)", group = grpV)
+showRngLbl  = input.bool(true, "Show range size label", group = grpV)
 showStats   = input.bool(true, "Show stats table", group = grpV)
 statsPosStr = input.string("Top right", "Stats table position", options = ["Top right", "Top left", "Bottom right", "Bottom left"], group = grpV)
 
@@ -148,13 +154,19 @@ shortReady = canTrade and allowShort and not (onePerLevel and shortUsed) and clo
 // Resting limit orders at the levels = "touch" entries. OCA so only one side fills.
 if longReady
     strategy.entry("Long", strategy.long, qty = contracts, limit = longLvl, oca_name = "porr", oca_type = strategy.oca.cancel)
-    strategy.exit("Long Exit", "Long", profit = tpLongT, loss = slTicks, comment_profit = "TP", comment_loss = "SL")
+    if useLineTP
+        strategy.exit("Long Exit", "Long", limit = rangeHigh, loss = slTicks, comment_profit = "TP", comment_loss = "SL")
+    else
+        strategy.exit("Long Exit", "Long", profit = tpLongT, loss = slTicks, comment_profit = "TP", comment_loss = "SL")
 else
     strategy.cancel("Long")
 
 if shortReady
     strategy.entry("Short", strategy.short, qty = contracts, limit = shortLvl, oca_name = "porr", oca_type = strategy.oca.cancel)
-    strategy.exit("Short Exit", "Short", profit = tpShortT, loss = slTicks, comment_profit = "TP", comment_loss = "SL")
+    if useLineTP
+        strategy.exit("Short Exit", "Short", limit = rangeLow, loss = slTicks, comment_profit = "TP", comment_loss = "SL")
+    else
+        strategy.exit("Short Exit", "Short", profit = tpShortT, loss = slTicks, comment_profit = "TP", comment_loss = "SL")
 else
     strategy.cancel("Short")
 
@@ -200,13 +212,13 @@ if strategy.position_size != 0
         bestLow  := math.min(bestLow, low)
 
 if strategy.position_size > 0
-    tp = entryPx + nz(tradeTp, tpLongT) * tick
+    tp = useLineTP and not str.startswith(tradeId, "Flip") ? rangeHigh : entryPx + nz(tradeTp, tpLongT) * tick
     sl = entryPx - nz(tradeSl, slTicks) * tick
     if useBE and bestHigh >= entryPx + beTrigger * tick
         sl := entryPx + beOffset * tick
     strategy.exit(tradeId + " Exit", tradeId, limit = tp, stop = sl, comment_profit = "TP", comment_loss = "SL")
 else if strategy.position_size < 0
-    tp = entryPx - nz(tradeTp, tpShortT) * tick
+    tp = useLineTP and not str.startswith(tradeId, "Flip") ? rangeLow : entryPx - nz(tradeTp, tpShortT) * tick
     sl = entryPx + nz(tradeSl, slTicks) * tick
     if useBE and bestLow <= entryPx - beTrigger * tick
         sl := entryPx - beOffset * tick
@@ -219,6 +231,25 @@ if flatAtEnd and inTrade and not nextInTrade and barstate.isconfirmed
 showLine = showLevels and rangeDone and inTrade
 plot(showLine ? rangeHigh : na, "Range High", color.red, 2, plot.style_linebr)
 plot(showLine ? rangeLow  : na, "Range Low", color.green, 2, plot.style_linebr)
+
+// Dashed grey mid-range line and a range-size label above the top line, both following the
+// current bar to the right while the trade window is open (one of each per day).
+var line  midLine = na
+var label rngLbl  = na
+if showLine and not showLine[1]
+    rangeTicks = (rangeHigh - rangeLow) / tick
+    if showMid
+        midLine := line.new(bar_index, (rangeHigh + rangeLow) / 2, bar_index, (rangeHigh + rangeLow) / 2, color = color.gray, style = line.style_dashed, width = 1)
+    if showRngLbl
+        rngLbl := label.new(bar_index, rangeHigh, "Range " + str.tostring(rangeHigh - rangeLow, format.mintick) + " pts (" + str.tostring(rangeTicks, "#") + " ticks)", style = label.style_label_lower_left, color = color.new(color.black, 100), textcolor = color.red, size = size.small)
+if showLine
+    if not na(midLine)
+        line.set_x2(midLine, bar_index)
+    if not na(rngLbl)
+        label.set_x(rngLbl, bar_index)
+if not showLine and showLine[1]
+    midLine := na
+    rngLbl  := na
 bgcolor(showRangeBg and inRange ? color.new(color.blue, 88) : na, title = "Range window")
 
 posLong  = strategy.position_size > 0

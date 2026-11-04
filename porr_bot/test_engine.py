@@ -152,6 +152,12 @@ class EngineTest(unittest.TestCase):
         t = self.trades()
         self.assertEqual((t[0]["exit_type"], float(t[0]["exit"])), ("TP", 1010.0))
 
+    def test_line_tp_targets_opposite_line(self):
+        path = [(1003, 1003, 999.5, 1001), (1001, 1010.5, 1001, 1010.5)]
+        self.run_bars(self.cfg(tp_ticks=4, sl_ticks=40, use_line_tp=True), range_bars() + trade_bars(path))
+        t = self.trades()
+        self.assertEqual((t[0]["exit_type"], float(t[0]["exit"])), ("TP", 1010.0))
+
     def test_contract_cap(self):
         eng = Engine(Config(contracts=10, max_contracts_cap=2, trade_log=""), PaperBroker())
         self.assertEqual(eng.qty, 2)

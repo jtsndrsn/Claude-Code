@@ -1,6 +1,6 @@
-"""PORR v1.1 strategy engine (broker-agnostic).
+"""PORR v1.2 strategy engine (broker-agnostic).
 
-Mirrors strategies/porr.pine v1.1:
+Mirrors strategies/porr.pine v1.2:
   * Range = high/low of the 1-minute bars inside the range window (default 07:30-08:30 CT).
   * From the trade-window open, rest a BUY limit at range low (- entry delay) and a SELL limit
     at range high (+ entry delay). First fill cancels the other (manual OCA).
@@ -62,6 +62,7 @@ class Config:
     tp_ticks: int = 400
     sl_ticks: int = 400
     use_be: bool = False
+    use_line_tp: bool = False        # TP at the opposite range line (overrides tp/trend TP; not flips)
     be_trigger: int = 100
     be_offset: int = 3
     use_trend_tp: bool = False
@@ -276,6 +277,9 @@ class Engine:
         else:
             with_trend = (d > 0 and self.trend_up) or (d < 0 and self.trend_dn)
             tp = c.tp_trend_ticks if (c.use_trend_tp and with_trend) else c.tp_ticks
+            if c.use_line_tp:
+                target = self.range_high if d > 0 else self.range_low
+                tp = max(1, round((target - f.price) * d / c.tick))
             sl = c.sl_ticks
         self.trades_today += 1
         self.used.add(f.tag)
