@@ -1,5 +1,7 @@
 //@version=6
-// Pre-Open Range Reversal  -  Version 1.3.1
+// Pre-Open Range Reversal  -  Version 1.3.2
+// v1.3.2: a line is skipped after ANY break while not in a trade from it (incl. after our own
+//         stop-out); exits always use prices so the trend TP is no longer cut to the normal TP.
 // v1.3.1: end-of-day close happens at the last bar's close (also on early-close days), and any
 //         position found outside the trade window is closed immediately.
 // v1.3: skip a line once price breaks through it (no fades of a pullback from outside the range).
@@ -58,7 +60,7 @@ grpT = "Trade rules"
 contracts   = input.int(1, "Contracts per trade", minval = 1, group = grpT)
 maxTrades   = input.int(4, "Max trades per day", minval = 1, group = grpT)
 onePerLevel = input.bool(true, "Only one trade per level per day", group = grpT)
-skipBroken  = input.bool(true, "Skip a line once price breaks through it", group = grpT, tooltip = "Only fade a line when price comes INTO it from inside the range. If price trades through a line's entry level without our order filling there (e.g. we were already in a trade, or that side was used), that line is skipped for the rest of the day, so a pullback back to it from the outside is not traded.")
+skipBroken  = input.bool(true, "Skip a line once price breaks through it", group = grpT, tooltip = "Only fade a line when price comes INTO it from inside the range. Once price trades through a line's entry level while we are not in a trade from that line (we were in the other trade, the side was used, or our trade there was stopped out), that line is skipped for the rest of the day, so a pullback to it from the outside is never traded.")
 allowLong   = input.bool(true, "Take longs (range low touch)", group = grpT)
 allowShort  = input.bool(true, "Take shorts (range high touch)", group = grpT)
 entryDelay  = input.int(24, "Entry delay (ticks beyond line)", minval = 0, group = grpT, tooltip = "Rests each limit this many ticks BEYOND the line: long below the range low, short above the range high. Read the dip stats with this at 0 first: above 0, trades that never dipped that far are not taken, so the stats only describe the deeper dips.")
@@ -102,8 +104,10 @@ var bool  flipLongArmed  = false   // short at range HIGH was stopped out -> lon
 var bool  flipShortArmed = false   // long at range LOW was stopped out  -> short the retest of the low
 var bool  flipLongUsed   = false
 var bool  flipShortUsed  = false
-var bool  highBroken = false   // price traded through the short entry level without a short fill
-var bool  lowBroken  = false   // price traded through the long entry level without a long fill
+var bool  highBroken = false   // price has been above the short entry level while we were not short
+var bool  lowBroken  = false   // price has been below the long entry level while we were not long
+var int   shortEntryBar = -1
+var int   longEntryBar  = -1
 
 if inRange and not inRange[1]
     // New day's range starts: reset everything
@@ -136,8 +140,12 @@ if newTrade
     tradesToday += totalTrades - nz(totalTrades[1])
     lastId = strategy.opentrades > 0 ? strategy.opentrades.entry_id(strategy.opentrades - 1) : strategy.closedtrades.entry_id(strategy.closedtrades - 1)
     switch lastId
-        "Long"       => longUsed      := true
-        "Short"      => shortUsed     := true
+        "Long"       =>
+            longUsed     := true
+            longEntryBar := bar_index
+        "Short"      =>
+            shortUsed     := true
+            shortEntryBar := bar_index
         "Flip Long"  => flipLongUsed  := true
         "Flip Short" => flipShortUsed := true
 
@@ -160,13 +168,14 @@ canTrade   = rangeDone and nextInTrade and not lastTradeBar and flat and tradesT
 // rather than instantly at market (e.g. re-arming after being stopped out beyond the level).
 longLvl    = rangeLow  - entryDelay * tick
 shortLvl   = rangeHigh + entryDelay * tick
-// A line counts as broken once price trades 1 tick through its entry level (where our limit would
-// have filled) without that side filling. After that, a pullback to it comes from OUTSIDE the range
-// (moving the opposite way), so with skipBroken on it is not traded again today.
+// A line counts as broken once price trades through its entry level while we are NOT in a trade
+// from that line (e.g. after our short was stopped out above the high, or while we were in a long).
+// From then on any touch of that line comes from OUTSIDE the range (price moving the opposite way),
+// so with skipBroken on it is not traded again today. The bar our own entry filled on doesn't count.
 if rangeDone and inTrade
-    if high >= shortLvl + tick and not shortUsed
+    if high >= shortLvl + tick and strategy.position_size >= 0 and bar_index != shortEntryBar
         highBroken := true
-    if low <= longLvl - tick and not longUsed
+    if low <= longLvl - tick and strategy.position_size <= 0 and bar_index != longEntryBar
         lowBroken := true
 
 longReady  = canTrade and allowLong  and not (onePerLevel and longUsed)  and close > longLvl  and not (skipBroken and lowBroken)
@@ -175,19 +184,15 @@ shortReady = canTrade and allowShort and not (onePerLevel and shortUsed) and clo
 // Resting limit orders at the levels = "touch" entries. OCA so only one side fills.
 if longReady
     strategy.entry("Long", strategy.long, qty = contracts, limit = longLvl, oca_name = "porr", oca_type = strategy.oca.cancel)
-    if useLineTP
-        strategy.exit("Long Exit", "Long", limit = rangeHigh, loss = slTicks, comment_profit = "TP", comment_loss = "SL")
-    else
-        strategy.exit("Long Exit", "Long", profit = tpLongT, loss = slTicks, comment_profit = "TP", comment_loss = "SL")
+    // Exits are always set as PRICES (limit/stop), never ticks (profit/loss): re-issuing an exit with
+    // the other kind keeps BOTH and TradingView uses whichever is closer, which cut the trend TP short.
+    strategy.exit("Long Exit", "Long", limit = useLineTP ? rangeHigh : longLvl + tpLongT * tick, stop = longLvl - slTicks * tick, comment_profit = "TP", comment_loss = "SL")
 else
     strategy.cancel("Long")
 
 if shortReady
     strategy.entry("Short", strategy.short, qty = contracts, limit = shortLvl, oca_name = "porr", oca_type = strategy.oca.cancel)
-    if useLineTP
-        strategy.exit("Short Exit", "Short", limit = rangeLow, loss = slTicks, comment_profit = "TP", comment_loss = "SL")
-    else
-        strategy.exit("Short Exit", "Short", profit = tpShortT, loss = slTicks, comment_profit = "TP", comment_loss = "SL")
+    strategy.exit("Short Exit", "Short", limit = useLineTP ? rangeLow : shortLvl - tpShortT * tick, stop = shortLvl + slTicks * tick, comment_profit = "TP", comment_loss = "SL")
 else
     strategy.cancel("Short")
 
@@ -197,13 +202,13 @@ flipLongReady  = useFlip and canTrade and flipLongArmed  and not flipLongUsed  a
 
 if flipShortReady
     strategy.entry("Flip Short", strategy.short, qty = contracts, limit = rangeLow, oca_name = "porr", oca_type = strategy.oca.cancel)
-    strategy.exit("Flip Short Exit", "Flip Short", profit = flipTp, loss = flipSl, comment_profit = "TP", comment_loss = "SL")
+    strategy.exit("Flip Short Exit", "Flip Short", limit = rangeLow - flipTp * tick, stop = rangeLow + flipSl * tick, comment_profit = "TP", comment_loss = "SL")
 else
     strategy.cancel("Flip Short")
 
 if flipLongReady
     strategy.entry("Flip Long", strategy.long, qty = contracts, limit = rangeHigh, oca_name = "porr", oca_type = strategy.oca.cancel)
-    strategy.exit("Flip Long Exit", "Flip Long", profit = flipTp, loss = flipSl, comment_profit = "TP", comment_loss = "SL")
+    strategy.exit("Flip Long Exit", "Flip Long", limit = rangeHigh + flipTp * tick, stop = rangeHigh - flipSl * tick, comment_profit = "TP", comment_loss = "SL")
 else
     strategy.cancel("Flip Long")
 

@@ -181,6 +181,19 @@ class EngineTest(unittest.TestCase):
         self.assertEqual([x["tag"] for x in self.trades()], ["Long"])
         self.assertEqual(eng.pos.tag, "Short")      # the pullback short was taken
 
+    def test_no_reshort_after_own_stop_out_above_high(self):
+        # Short fills at the high, is stopped out above it, price comes back down through the high
+        # and then ticks back up to it: with one_per_level off the old rule would short again.
+        path = [
+            (1008, 1010.5, 1008, 1010),    # short @1010
+            (1010, 1016, 1010, 1016),      # stopped (SL 20 ticks -> 1015)
+            (1016, 1016, 1007, 1007),      # back down below the high
+            (1007, 1011, 1007, 1009),      # retouch from below: must NOT short
+        ]
+        eng = self.run_bars(self.cfg(one_per_level=False), range_bars() + trade_bars(path))
+        self.assertEqual([(x["tag"], x["exit_type"]) for x in self.trades()], [("Short", "SL")])
+        self.assertIsNone(eng.pos)
+
     def test_contract_cap(self):
         eng = Engine(Config(contracts=10, max_contracts_cap=2, trade_log=""), PaperBroker())
         self.assertEqual(eng.qty, 2)

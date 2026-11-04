@@ -1,6 +1,6 @@
-"""PORR v1.3 strategy engine (broker-agnostic).
+"""PORR v1.3.2 strategy engine (broker-agnostic).
 
-Mirrors strategies/porr.pine v1.3:
+Mirrors strategies/porr.pine v1.3.2:
   * Range = high/low of the 1-minute bars inside the range window (default 07:30-08:30 CT).
   * From the trade-window open, rest a BUY limit at range low (- entry delay) and a SELL limit
     at range high (+ entry delay). First fill cancels the other (manual OCA).
@@ -208,12 +208,15 @@ class Engine:
     def _manage_entries(self, price: float) -> None:
         c, tick = self.cfg, self.cfg.tick
         if self.range_done and self.range_high is not None:
-            # A line is broken once price trades 1 tick through its entry level without that side
-            # filling (no working order there that could be mid-fill, and not used today).
-            if price >= self.range_high + c.entry_delay * tick + tick and "Short" not in self.used \
+            # A line is broken once price trades 1 tick through its entry level while we are not in a
+            # trade from that side (incl. after our own stop-out there) and no order of ours is
+            # resting there that could be mid-fill.
+            short_now = self.pos is not None and self.pos.dir < 0
+            long_now = self.pos is not None and self.pos.dir > 0
+            if price >= self.range_high + c.entry_delay * tick + tick and not short_now \
                     and "Short" not in self.working:
                 self.broken.add("Short")
-            if price <= self.range_low - c.entry_delay * tick - tick and "Long" not in self.used \
+            if price <= self.range_low - c.entry_delay * tick - tick and not long_now \
                     and "Long" not in self.working:
                 self.broken.add("Long")
         can = (self.range_done and self.pos is None and self.trades_today < c.max_trades
