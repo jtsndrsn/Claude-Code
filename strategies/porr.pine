@@ -1,5 +1,6 @@
 //@version=6
-// Pre-Open Range Reversal  -  Version 1.2
+// Pre-Open Range Reversal  -  Version 1.3
+// v1.3: skip a line once price breaks through it (no fades of a pullback from outside the range).
 // v1.2: range-size label, dashed mid-range line, optional TP at the opposite range line.
 // v1.1 defaults: TP 400 / SL 400, no breakeven, entry delay 24, 1 contract, max 4 trades,
 //   trend TP 600 on 1h EMA50 (off), flip 100/100 (off).
@@ -55,6 +56,7 @@ grpT = "Trade rules"
 contracts   = input.int(1, "Contracts per trade", minval = 1, group = grpT)
 maxTrades   = input.int(4, "Max trades per day", minval = 1, group = grpT)
 onePerLevel = input.bool(true, "Only one trade per level per day", group = grpT)
+skipBroken  = input.bool(true, "Skip a line once price breaks through it", group = grpT, tooltip = "Only fade a line when price comes INTO it from inside the range. If price trades through a line's entry level without our order filling there (e.g. we were already in a trade, or that side was used), that line is skipped for the rest of the day, so a pullback back to it from the outside is not traded.")
 allowLong   = input.bool(true, "Take longs (range low touch)", group = grpT)
 allowShort  = input.bool(true, "Take shorts (range high touch)", group = grpT)
 entryDelay  = input.int(24, "Entry delay (ticks beyond line)", minval = 0, group = grpT, tooltip = "Rests each limit this many ticks BEYOND the line: long below the range low, short above the range high. Read the dip stats with this at 0 first: above 0, trades that never dipped that far are not taken, so the stats only describe the deeper dips.")
@@ -94,6 +96,8 @@ var bool  flipLongArmed  = false   // short at range HIGH was stopped out -> lon
 var bool  flipShortArmed = false   // long at range LOW was stopped out  -> short the retest of the low
 var bool  flipLongUsed   = false
 var bool  flipShortUsed  = false
+var bool  highBroken = false   // price traded through the short entry level without a short fill
+var bool  lowBroken  = false   // price traded through the long entry level without a long fill
 
 if inRange and not inRange[1]
     // New day's range starts: reset everything
@@ -107,6 +111,8 @@ if inRange and not inRange[1]
     flipShortArmed := false
     flipLongUsed   := false
     flipShortUsed  := false
+    highBroken     := false
+    lowBroken      := false
 else if inRange
     rangeHigh := math.max(rangeHigh, high)
     rangeLow  := math.min(rangeLow, low)
@@ -148,8 +154,17 @@ canTrade   = rangeDone and nextInTrade and flat and tradesToday < maxTrades and 
 // rather than instantly at market (e.g. re-arming after being stopped out beyond the level).
 longLvl    = rangeLow  - entryDelay * tick
 shortLvl   = rangeHigh + entryDelay * tick
-longReady  = canTrade and allowLong  and not (onePerLevel and longUsed)  and close > longLvl
-shortReady = canTrade and allowShort and not (onePerLevel and shortUsed) and close < shortLvl
+// A line counts as broken once price trades 1 tick through its entry level (where our limit would
+// have filled) without that side filling. After that, a pullback to it comes from OUTSIDE the range
+// (moving the opposite way), so with skipBroken on it is not traded again today.
+if rangeDone and inTrade
+    if high >= shortLvl + tick and not shortUsed
+        highBroken := true
+    if low <= longLvl - tick and not longUsed
+        lowBroken := true
+
+longReady  = canTrade and allowLong  and not (onePerLevel and longUsed)  and close > longLvl  and not (skipBroken and lowBroken)
+shortReady = canTrade and allowShort and not (onePerLevel and shortUsed) and close < shortLvl and not (skipBroken and highBroken)
 
 // Resting limit orders at the levels = "touch" entries. OCA so only one side fills.
 if longReady

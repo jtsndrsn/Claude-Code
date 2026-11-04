@@ -158,6 +158,29 @@ class EngineTest(unittest.TestCase):
         t = self.trades()
         self.assertEqual((t[0]["exit_type"], float(t[0]["exit"])), ("TP", 1010.0))
 
+    def test_no_short_on_pullback_after_break_up(self):
+        # Long fills, rallies through the HIGH while we're in the long (short can't be armed),
+        # long hits TP above the high, then price falls back to the high from above: no short.
+        path = [
+            (1003, 1003, 999.5, 1001),     # long @1000
+            (1001, 1012, 1001, 1012),      # through the high (1010) while long
+            (1012, 1015.5, 1012, 1015),    # long TP @1015 (60 ticks)
+            (1015, 1015, 1008, 1008),      # back down below the high
+            (1008, 1011, 1008, 1009),      # touches 1010.25+ from below: would short without the rule
+        ]
+        eng = self.run_bars(self.cfg(tp_ticks=60, sl_ticks=40), range_bars() + trade_bars(path))
+        self.assertEqual([x["tag"] for x in self.trades()], ["Long"])
+        self.assertIsNone(eng.pos)
+
+    def test_pullback_short_allowed_when_rule_off(self):
+        path = [
+            (1003, 1003, 999.5, 1001), (1001, 1012, 1001, 1012), (1012, 1015.5, 1012, 1015),
+            (1015, 1015, 1008, 1008), (1008, 1011, 1008, 1009),
+        ]
+        eng = self.run_bars(self.cfg(tp_ticks=60, sl_ticks=40, skip_broken=False), range_bars() + trade_bars(path))
+        self.assertEqual([x["tag"] for x in self.trades()], ["Long"])
+        self.assertEqual(eng.pos.tag, "Short")      # the pullback short was taken
+
     def test_contract_cap(self):
         eng = Engine(Config(contracts=10, max_contracts_cap=2, trade_log=""), PaperBroker())
         self.assertEqual(eng.qty, 2)

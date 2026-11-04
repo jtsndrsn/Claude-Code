@@ -1,6 +1,6 @@
-"""PORR v1.2 strategy engine (broker-agnostic).
+"""PORR v1.3 strategy engine (broker-agnostic).
 
-Mirrors strategies/porr.pine v1.2:
+Mirrors strategies/porr.pine v1.3:
   * Range = high/low of the 1-minute bars inside the range window (default 07:30-08:30 CT).
   * From the trade-window open, rest a BUY limit at range low (- entry delay) and a SELL limit
     at range high (+ entry delay). First fill cancels the other (manual OCA).
@@ -75,6 +75,7 @@ class Config:
     contracts: int = 1
     max_trades: int = 4
     one_per_level: bool = True
+    skip_broken: bool = True         # skip a line for the day once price trades through it unfilled
     allow_long: bool = True
     allow_short: bool = True
     entry_delay: int = 24
@@ -114,6 +115,7 @@ class Engine:
         self.trades_today = 0
         self.used: set[str] = set()
         self.flip_armed: set[str] = set()
+        self.broken: set[str] = set()                 # "Long"/"Short" lines price broke through
         self.eod_done = False
         # orders / position
         self.working: dict[str, str] = {}          # entry tag -> order id
@@ -188,6 +190,7 @@ class Engine:
         self.trades_today = 0
         self.used.clear()
         self.flip_armed.clear()
+        self.broken.clear()
         self.eod_done = False
 
     # ------------------------------------------------------------------ prices
@@ -204,6 +207,15 @@ class Engine:
 
     def _manage_entries(self, price: float) -> None:
         c, tick = self.cfg, self.cfg.tick
+        if self.range_done and self.range_high is not None:
+            # A line is broken once price trades 1 tick through its entry level without that side
+            # filling (no working order there that could be mid-fill, and not used today).
+            if price >= self.range_high + c.entry_delay * tick + tick and "Short" not in self.used \
+                    and "Short" not in self.working:
+                self.broken.add("Short")
+            if price <= self.range_low - c.entry_delay * tick - tick and "Long" not in self.used \
+                    and "Long" not in self.working:
+                self.broken.add("Long")
         can = (self.range_done and self.pos is None and self.trades_today < c.max_trades
                and self.range_high is not None)
         if not can:
@@ -212,9 +224,11 @@ class Engine:
         long_lvl = self.range_low - c.entry_delay * tick
         short_lvl = self.range_high + c.entry_delay * tick
         wanted = {
-            "Long": (c.allow_long and not (c.one_per_level and "Long" in self.used), "BUY", long_lvl,
+            "Long": (c.allow_long and not (c.one_per_level and "Long" in self.used)
+                     and not (c.skip_broken and "Long" in self.broken), "BUY", long_lvl,
                      price > long_lvl),
-            "Short": (c.allow_short and not (c.one_per_level and "Short" in self.used), "SELL", short_lvl,
+            "Short": (c.allow_short and not (c.one_per_level and "Short" in self.used)
+                      and not (c.skip_broken and "Short" in self.broken), "SELL", short_lvl,
                       price < short_lvl),
             "Flip Short": (c.use_flip and "Flip Short" in self.flip_armed and "Flip Short" not in self.used,
                            "SELL", self.range_low, price < self.range_low),
