@@ -53,7 +53,7 @@ flipSl   = input.int(100, "Flip stop loss (ticks)", minval = 1, group = grpX)
 
 grpT = "Trade rules"
 contracts   = input.int(1, "Contracts per trade", minval = 1, group = grpT)
-maxTrades   = input.int(5, "Max trades per day", minval = 1, group = grpT)
+maxTrades   = input.int(4, "Max trades per day", minval = 1, group = grpT)
 onePerLevel = input.bool(true, "Only one trade per level per day", group = grpT)
 allowLong   = input.bool(true, "Take longs (range low touch)", group = grpT)
 allowShort  = input.bool(true, "Take shorts (range high touch)", group = grpT)
