@@ -1,5 +1,7 @@
 //@version=6
-// Pre-Open Range Reversal  -  Version 1.3
+// Pre-Open Range Reversal  -  Version 1.3.1
+// v1.3.1: end-of-day close happens at the last bar's close (also on early-close days), and any
+//         position found outside the trade window is closed immediately.
 // v1.3: skip a line once price breaks through it (no fades of a pullback from outside the range).
 // v1.2: range-size label, dashed mid-range line, optional TP at the opposite range line.
 // v1.1 defaults: TP 400 / SL 400, no breakeven, entry delay 24, 1 contract, max 4 trades,
@@ -77,6 +79,10 @@ inTrade = not na(time(timeframe.period, tradeSess, tz))
 // This lets the limits rest from the 08:30 open instead of one bar late.
 nextInRange = not na(time(timeframe.period, rangeSess, tz, -1))
 nextInTrade = not na(time(timeframe.period, tradeSess, tz, -1))
+// Last bar we may hold orders on. Besides the normal end of the trade window, this also catches
+// the exchange's last bar of the day (early-close holidays like 12:00 CT), where the next bar is
+// still "inside" the window on paper but really comes after the overnight break.
+lastTradeBar = inTrade and (not nextInTrade or session.islastbar)
 
 // ---------- Trend ----------
 // Uses the last CLOSED trend-timeframe bar ([1] + lookahead_on), so it never repaints.
@@ -149,7 +155,7 @@ if strategy.closedtrades > nz(strategy.closedtrades[1])
 
 // ---------- Entries ----------
 flat       = strategy.position_size == 0
-canTrade   = rangeDone and nextInTrade and flat and tradesToday < maxTrades and not na(rangeHigh) and not na(rangeLow)
+canTrade   = rangeDone and nextInTrade and not lastTradeBar and flat and tradesToday < maxTrades and not na(rangeHigh) and not na(rangeLow)
 // Only rest a limit when price is on the correct side of the level, so it fills on a touch
 // rather than instantly at market (e.g. re-arming after being stopped out beyond the level).
 longLvl    = rangeLow  - entryDelay * tick
@@ -239,8 +245,14 @@ else if strategy.position_size < 0
         sl := entryPx - beOffset * tick
     strategy.exit(tradeId + " Exit", tradeId, limit = tp, stop = sl, comment_profit = "TP", comment_loss = "SL")
 
-if flatAtEnd and inTrade and not nextInTrade and barstate.isconfirmed
-    strategy.close_all(comment = "EOD")
+// immediately = true: close at THIS bar's close, not the next bar's open (which after an early
+// close or the daily break would be in the next session).
+if flatAtEnd and lastTradeBar and barstate.isconfirmed
+    strategy.close_all(comment = "EOD", immediately = true)
+// Safety net: never hold a position outside the trade window (e.g. an order that filled at the
+// open after a session break). Closes it at this bar's close.
+if flatAtEnd and not inTrade and strategy.position_size != 0 and barstate.isconfirmed
+    strategy.close_all(comment = "EOD", immediately = true)
 
 // ---------- Visuals ----------
 showLine = showLevels and rangeDone and inTrade
@@ -275,7 +287,7 @@ plot(showTrend ? htfEma : na, "Trend EMA", trendUp ? color.teal : color.orange, 
 // ---------- End of day ----------
 // Retire the day's levels when the trade window closes, so a day with no range bars
 // (holiday / missing data) can't trade off yesterday's stale levels.
-if inTrade and not nextInTrade and barstate.isconfirmed
+if lastTradeBar and barstate.isconfirmed
     rangeDone := false
 
 // ---------- Stats ----------
