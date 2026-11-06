@@ -152,6 +152,48 @@ class EngineTest(unittest.TestCase):
         t = self.trades()
         self.assertEqual((t[0]["exit_type"], float(t[0]["exit"])), ("TP", 1010.0))
 
+    def test_line_tp_targets_opposite_line(self):
+        path = [(1003, 1003, 999.5, 1001), (1001, 1010.5, 1001, 1010.5)]
+        self.run_bars(self.cfg(tp_ticks=4, sl_ticks=40, use_line_tp=True), range_bars() + trade_bars(path))
+        t = self.trades()
+        self.assertEqual((t[0]["exit_type"], float(t[0]["exit"])), ("TP", 1010.0))
+
+    def test_no_short_on_pullback_after_break_up(self):
+        # Long fills, rallies through the HIGH while we're in the long (short can't be armed),
+        # long hits TP above the high, then price falls back to the high from above: no short.
+        path = [
+            (1003, 1003, 999.5, 1001),     # long @1000
+            (1001, 1012, 1001, 1012),      # through the high (1010) while long
+            (1012, 1015.5, 1012, 1015),    # long TP @1015 (60 ticks)
+            (1015, 1015, 1008, 1008),      # back down below the high
+            (1008, 1011, 1008, 1009),      # touches 1010.25+ from below: would short without the rule
+        ]
+        eng = self.run_bars(self.cfg(tp_ticks=60, sl_ticks=40), range_bars() + trade_bars(path))
+        self.assertEqual([x["tag"] for x in self.trades()], ["Long"])
+        self.assertIsNone(eng.pos)
+
+    def test_pullback_short_allowed_when_rule_off(self):
+        path = [
+            (1003, 1003, 999.5, 1001), (1001, 1012, 1001, 1012), (1012, 1015.5, 1012, 1015),
+            (1015, 1015, 1008, 1008), (1008, 1011, 1008, 1009),
+        ]
+        eng = self.run_bars(self.cfg(tp_ticks=60, sl_ticks=40, skip_broken=False), range_bars() + trade_bars(path))
+        self.assertEqual([x["tag"] for x in self.trades()], ["Long"])
+        self.assertEqual(eng.pos.tag, "Short")      # the pullback short was taken
+
+    def test_no_reshort_after_own_stop_out_above_high(self):
+        # Short fills at the high, is stopped out above it, price comes back down through the high
+        # and then ticks back up to it: with one_per_level off the old rule would short again.
+        path = [
+            (1008, 1010.5, 1008, 1010),    # short @1010
+            (1010, 1016, 1010, 1016),      # stopped (SL 20 ticks -> 1015)
+            (1016, 1016, 1007, 1007),      # back down below the high
+            (1007, 1011, 1007, 1009),      # retouch from below: must NOT short
+        ]
+        eng = self.run_bars(self.cfg(one_per_level=False), range_bars() + trade_bars(path))
+        self.assertEqual([(x["tag"], x["exit_type"]) for x in self.trades()], [("Short", "SL")])
+        self.assertIsNone(eng.pos)
+
     def test_contract_cap(self):
         eng = Engine(Config(contracts=10, max_contracts_cap=2, trade_log=""), PaperBroker())
         self.assertEqual(eng.qty, 2)

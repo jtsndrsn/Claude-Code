@@ -1,7 +1,7 @@
 # Copy to config.toml and edit.  API keys are NOT stored here:
 # set the environment variables WEBULL_APP_KEY and WEBULL_APP_SECRET instead.
 
-[strategy]                 # same settings as the TradingView v1.1 inputs
+[strategy]                 # same settings as the TradingView v1.3 inputs
 symbol          = "MNQZ6"  # Webull contract code: product + month letter + 1-digit year (Z6 = Dec 2026). Roll each quarter!
 tick            = 0.25
 range_start     = "07:30"  # America/Chicago
@@ -12,6 +12,7 @@ flat_at_end     = true
 tp_ticks        = 400
 sl_ticks        = 400
 use_be          = false
+use_line_tp     = false    # true = TP at the opposite range line
 be_trigger      = 100
 be_offset       = 3
 use_trend_tp    = false
@@ -25,6 +26,7 @@ contracts       = 1
 max_contracts_cap = 1      # hard safety cap per order - raise deliberately
 max_trades      = 4
 one_per_level   = true
+skip_broken     = true     # skip a line once price breaks through it without our fill
 allow_long      = true
 allow_short     = true
 entry_delay     = 24

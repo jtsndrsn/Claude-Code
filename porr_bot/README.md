@@ -1,6 +1,6 @@
-# PORR bot (Pre-Open Range Reversal v1.1)
+# PORR bot (Pre-Open Range Reversal v1.3)
 
-Runs the TradingView strategy `strategies/porr.pine` (v1.1) automatically on Webull futures.
+Runs the TradingView strategy `strategies/porr.pine` (v1.3) automatically on Webull futures.
 
 ## Status
 
