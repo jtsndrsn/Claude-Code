@@ -1,5 +1,6 @@
 //@version=6
-// Pre-Open Range Reversal  -  Version 1.3.2
+// Pre-Open Range Reversal  -  Version 1.4
+// v1.4: optional net P&L on the exit marks (TP / SL / EOD).
 // v1.3.2: a line is skipped after ANY break while not in a trade from it (incl. after our own
 //         stop-out); exits always use prices so the trend TP is no longer cut to the normal TP.
 // v1.3.1: end-of-day close happens at the last bar's close (also on early-close days), and any
@@ -71,10 +72,21 @@ showRangeBg = input.bool(true, "Shade range window", group = grpV)
 showMid     = input.bool(true, "Show mid-range line (dashed)", group = grpV)
 showRngLbl  = input.bool(true, "Show range size label", group = grpV)
 showStats   = input.bool(true, "Show stats table", group = grpV)
+showPnlMark = input.bool(true, "Show P&L on exit marks", group = grpV, tooltip = "Adds the trade's net P&L (after commission) to the TP / SL / EOD text on the chart's exit marks, e.g. \"TP +$198.60\". Uses the $0.70-per-contract-per-side commission set in this script; slippage is not included.")
 statsPosStr = input.string("Top right", "Stats table position", options = ["Top right", "Top left", "Bottom right", "Bottom left"], group = grpV)
 
 // ---------- Session state ----------
 tick    = syminfo.mintick
+COMM_PER_SIDE = 0.7   // keep in step with commission_value in strategy() above
+
+// Exit-mark text: "TP" / "SL" / "EOD", plus the trade's net P&L when showPnlMark is on.
+// The stats below only look at how the text STARTS, so the P&L suffix doesn't affect them.
+f_exitTxt(string tag, float exitPx, float entry, int dir, float qty) =>
+    if not showPnlMark or na(exitPx) or na(entry)
+        tag
+    else
+        net = (exitPx - entry) * dir * syminfo.pointvalue * qty - 2 * COMM_PER_SIDE * qty
+        tag + " " + (net >= 0 ? "+" : "-") + "$" + str.tostring(math.abs(net), "#,##0.00")
 inRange = not na(time(timeframe.period, rangeSess, tz))
 inTrade = not na(time(timeframe.period, tradeSess, tz))
 // Orders placed at a bar's close work on the NEXT bar, so gate them on the next bar's session.
@@ -155,7 +167,7 @@ if strategy.closedtrades > nz(strategy.closedtrades[1])
     lId   = strategy.closedtrades.entry_id(li)
     lEnt  = strategy.closedtrades.entry_price(li)
     lExit = strategy.closedtrades.exit_price(li)
-    fullStop = strategy.closedtrades.exit_comment(li) == "SL"
+    fullStop = str.startswith(strategy.closedtrades.exit_comment(li), "SL")
     if fullStop and lId == "Long" and lExit <= lEnt - (slTicks - 1) * tick
         flipShortArmed := true
     if fullStop and lId == "Short" and lExit >= lEnt + (slTicks - 1) * tick
@@ -186,13 +198,17 @@ if longReady
     strategy.entry("Long", strategy.long, qty = contracts, limit = longLvl, oca_name = "porr", oca_type = strategy.oca.cancel)
     // Exits are always set as PRICES (limit/stop), never ticks (profit/loss): re-issuing an exit with
     // the other kind keeps BOTH and TradingView uses whichever is closer, which cut the trend TP short.
-    strategy.exit("Long Exit", "Long", limit = useLineTP ? rangeHigh : longLvl + tpLongT * tick, stop = longLvl - slTicks * tick, comment_profit = "TP", comment_loss = "SL")
+    lTp = useLineTP ? rangeHigh : longLvl + tpLongT * tick
+    lSl = longLvl - slTicks * tick
+    strategy.exit("Long Exit", "Long", limit = lTp, stop = lSl, comment_profit = f_exitTxt("TP", lTp, longLvl, 1, contracts), comment_loss = f_exitTxt("SL", lSl, longLvl, 1, contracts))
 else
     strategy.cancel("Long")
 
 if shortReady
     strategy.entry("Short", strategy.short, qty = contracts, limit = shortLvl, oca_name = "porr", oca_type = strategy.oca.cancel)
-    strategy.exit("Short Exit", "Short", limit = useLineTP ? rangeLow : shortLvl - tpShortT * tick, stop = shortLvl + slTicks * tick, comment_profit = "TP", comment_loss = "SL")
+    sTp = useLineTP ? rangeLow : shortLvl - tpShortT * tick
+    sSl = shortLvl + slTicks * tick
+    strategy.exit("Short Exit", "Short", limit = sTp, stop = sSl, comment_profit = f_exitTxt("TP", sTp, shortLvl, -1, contracts), comment_loss = f_exitTxt("SL", sSl, shortLvl, -1, contracts))
 else
     strategy.cancel("Short")
 
@@ -202,13 +218,13 @@ flipLongReady  = useFlip and canTrade and flipLongArmed  and not flipLongUsed  a
 
 if flipShortReady
     strategy.entry("Flip Short", strategy.short, qty = contracts, limit = rangeLow, oca_name = "porr", oca_type = strategy.oca.cancel)
-    strategy.exit("Flip Short Exit", "Flip Short", limit = rangeLow - flipTp * tick, stop = rangeLow + flipSl * tick, comment_profit = "TP", comment_loss = "SL")
+    strategy.exit("Flip Short Exit", "Flip Short", limit = rangeLow - flipTp * tick, stop = rangeLow + flipSl * tick, comment_profit = f_exitTxt("TP", rangeLow - flipTp * tick, rangeLow, -1, contracts), comment_loss = f_exitTxt("SL", rangeLow + flipSl * tick, rangeLow, -1, contracts))
 else
     strategy.cancel("Flip Short")
 
 if flipLongReady
     strategy.entry("Flip Long", strategy.long, qty = contracts, limit = rangeHigh, oca_name = "porr", oca_type = strategy.oca.cancel)
-    strategy.exit("Flip Long Exit", "Flip Long", limit = rangeHigh + flipTp * tick, stop = rangeHigh - flipSl * tick, comment_profit = "TP", comment_loss = "SL")
+    strategy.exit("Flip Long Exit", "Flip Long", limit = rangeHigh + flipTp * tick, stop = rangeHigh - flipSl * tick, comment_profit = f_exitTxt("TP", rangeHigh + flipTp * tick, rangeHigh, 1, contracts), comment_loss = f_exitTxt("SL", rangeHigh - flipSl * tick, rangeHigh, 1, contracts))
 else
     strategy.cancel("Flip Long")
 
@@ -242,22 +258,22 @@ if strategy.position_size > 0
     sl = entryPx - nz(tradeSl, slTicks) * tick
     if useBE and bestHigh >= entryPx + beTrigger * tick
         sl := entryPx + beOffset * tick
-    strategy.exit(tradeId + " Exit", tradeId, limit = tp, stop = sl, comment_profit = "TP", comment_loss = "SL")
+    strategy.exit(tradeId + " Exit", tradeId, limit = tp, stop = sl, comment_profit = f_exitTxt("TP", tp, entryPx, 1, strategy.position_size), comment_loss = f_exitTxt("SL", sl, entryPx, 1, strategy.position_size))
 else if strategy.position_size < 0
     tp = useLineTP and not str.startswith(tradeId, "Flip") ? rangeLow : entryPx - nz(tradeTp, tpShortT) * tick
     sl = entryPx + nz(tradeSl, slTicks) * tick
     if useBE and bestLow <= entryPx - beTrigger * tick
         sl := entryPx - beOffset * tick
-    strategy.exit(tradeId + " Exit", tradeId, limit = tp, stop = sl, comment_profit = "TP", comment_loss = "SL")
+    strategy.exit(tradeId + " Exit", tradeId, limit = tp, stop = sl, comment_profit = f_exitTxt("TP", tp, entryPx, -1, -strategy.position_size), comment_loss = f_exitTxt("SL", sl, entryPx, -1, -strategy.position_size))
 
 // immediately = true: close at THIS bar's close, not the next bar's open (which after an early
 // close or the daily break would be in the next session).
 if flatAtEnd and lastTradeBar and barstate.isconfirmed
-    strategy.close_all(comment = "EOD", immediately = true)
+    strategy.close_all(comment = f_exitTxt("EOD", close, entryPx, int(math.sign(strategy.position_size)), math.abs(strategy.position_size)), immediately = true)
 // Safety net: never hold a position outside the trade window (e.g. an order that filled at the
 // open after a session break). Closes it at this bar's close.
 if flatAtEnd and not inTrade and strategy.position_size != 0 and barstate.isconfirmed
-    strategy.close_all(comment = "EOD", immediately = true)
+    strategy.close_all(comment = f_exitTxt("EOD", close, entryPx, int(math.sign(strategy.position_size)), math.abs(strategy.position_size)), immediately = true)
 
 // ---------- Visuals ----------
 showLine = showLevels and rangeDone and inTrade
@@ -316,8 +332,8 @@ if barstate.isconfirmed and strategy.closedtrades > processed
         eBar   = strategy.closedtrades.entry_bar_index(i)
         xBar   = strategy.closedtrades.exit_bar_index(i)
         // TP exits are tagged "TP" (works for both the normal and the with-trend TP)
-        isTP   = strategy.closedtrades.exit_comment(i) == "TP"
-        isEOD  = strategy.closedtrades.exit_comment(i) == "EOD"
+        isTP   = str.startswith(strategy.closedtrades.exit_comment(i), "TP")
+        isEOD  = str.startswith(strategy.closedtrades.exit_comment(i), "EOD")
         // Entry bar: everything before a limit fill is on the far side of the entry, so the
         // bar's low (long) / high (short) is after the fill and safe to use.
         worst = isLong ? low[bar_index - eBar] : high[bar_index - eBar]
