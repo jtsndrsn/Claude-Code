@@ -69,9 +69,17 @@ def live(cfg: Config, raw: dict, tz: str) -> None:
     paper = wb.get("paper", True)
     log.warning("LIVE MODE  sandbox=%s  paper_fills=%s  symbol=%s", sandbox, paper, cfg.symbol)
 
-    real = WebullBroker(key, secret, wb["account_id"], cfg.symbol, sandbox=sandbox)
-    broker = PaperBroker(cfg.tick) if paper else real
-    feed = WebullFeed(real.api_client, cfg.symbol, tz)
+    if paper:
+        # Paper trading: LIVE Webull prices (production market data), simulated fills, no orders sent,
+        # no trading connection at all.
+        from webull.core.client import ApiClient
+        api = ApiClient(key, secret, "us"); api.add_endpoint("us", "api.webull.com")
+        broker = PaperBroker(cfg.tick)
+        feed = WebullFeed(api, cfg.symbol, tz)
+    else:
+        real = WebullBroker(key, secret, wb["account_id"], cfg.symbol, sandbox=sandbox)
+        broker = real
+        feed = WebullFeed(real.api_client, cfg.symbol, tz)
     eng = Engine(cfg, broker)
     poll = float(wb.get("poll_seconds", 2.0))
     stop_file = os.path.join(HERE, "STOP")
@@ -100,6 +108,13 @@ def live(cfg: Config, raw: dict, tz: str) -> None:
                 ctx_day = today
             except Exception:
                 log.exception("could not load day context (VIX / trend); retrying")
+        # One session per run: once the trade window is over and we're flat, stop (a scheduler
+        # starts the bot again the next morning).
+        now_ct = datetime.now(ZoneInfo(tz))
+        if wb.get("exit_after_session", True) and eng.eod_done and eng.pos is None and \
+                now_ct.time() >= (datetime.combine(now_ct.date(), cfg.trade_end) + timedelta(minutes=5)).time():
+            log.warning("Trade window over and flat: exiting for today")
+            break
         if os.path.exists(stop_file):
             log.warning("STOP file found: cancelling and flattening")
             eng._cancel_entries()

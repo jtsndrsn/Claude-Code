@@ -53,6 +53,17 @@ Trades go to `trades.csv`. Compare with the Strategy Tester's List of Trades.
 3. Put your `account_id` in `config.toml`. Keep `sandbox = true` and `paper = true` to start.
 4. `python run.py live --config config.toml`
 
+### Paper trading (recommended first)
+Live Webull prices, simulated fills, **no orders sent**. Trades go to `trades.csv`, the day's log to `logs/`.
+1. Webull website -> OpenAPI Management: create a **production** App Key / Secret (market data needs it).
+   The first run asks you to approve a 2FA notification in the Webull app (Menu > Messages > OpenAPI).
+2. `pip install -r requirements.txt` and `cp config.example.toml config.toml`
+   (keep `paper = true`; set `symbol` to the front contract, e.g. MNQZ6, and roll it each quarter).
+3. Set `WEBULL_APP_KEY` / `WEBULL_APP_SECRET` as environment variables on that computer.
+4. Schedule `start_paper.bat` (Windows Task Scheduler) or `start_paper.sh` (cron) for **06:25 CT on weekdays**.
+   The bot loads the VIX regime and daily trend, trades 08:30-11:00, then exits by itself.
+5. Once a week, compare `trades.csv` with TradingView's List of Trades for the same days.
+
 ### Emergency stop
 Create a file named `STOP` in this folder. The bot cancels its orders, closes any position at market and exits.
 
