@@ -38,3 +38,25 @@ B: same but SL 150, TP 600, BE trigger 150 -> stop +75, with-trend TP 900.
 
 Stage 2 used both years to pick among robust configs, so A/B carry some selection bias; forward-test
 in paper before trading size.
+
+## Losing-trade analysis (Setups A and B)
+Every trade with market context at entry: `trades_setupA_with_context.csv`, `trades_setupB_with_context.csv`
+(range size vs ATR, gap, overnight range, approach speed, 07:30 news shock, VIX level/change,
+daily MACD/RSI/Stoch/%B/ADX/Williams %R, 5-min RSI/Stoch at entry, VWAP distance, day of week).
+News events (Webull macro calendar) for the 34 worst and 35 best Setup-A days: `news_*_days_setupA.csv`.
+
+- Losers are almost all full stops (302 of 305 for A); 35 days had two stops.
+- Most features show no stable difference between winners and losers. Big news shocks, gaps,
+  fast approaches and high volatility are, if anything, GOOD for this strategy (skipping them lost money).
+- News: worst and best days have the same mix of scheduled events (best days had slightly more CPI/PMI);
+  scheduled news did not predict losses.
+- Consistent signals across both setups and both years:
+  * Trades where daily momentum AGREES with the trade (daily MACD histogram / DI / RSI on the trade's side)
+    earn much less per trade than trades against daily momentum (A: +$64/+$12 vs +$147/+$217 per trade).
+    Skipping them lowers total profit but cuts drawdown; skipping only when MACD and DI BOTH agree keeps
+    ~95% of profit with lower drawdown.
+  * Skip the day if VIX fell more than ~0.9 points the previous day: A +$72.5k -> +$85.0k (dd $8.7k -> $8.4k),
+    B +$87.7k -> +$101.8k (dd $18.0k -> $14.6k). Helped 2026 in both setups, neutral/positive in 2025.
+- Pierce-and-reclaim entries (enter after price trades through the line and back) performed about the same
+  as Setup A, not better.
+- Fear & Greed index could not be included (CNN blocks automated access).

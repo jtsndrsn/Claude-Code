@@ -105,3 +105,54 @@ def sim_day(day, hi, lo, cfg, allow_long=True, allow_short=True, tp_mult=1.0, tp
                 broken[other] = True
         i = x                                           # orders re-placed on the exit tick
     return out
+
+
+def sim_day_reclaim(day, hi, lo, cfg, tp_mult_dir=None):
+    """Confirmation entry: price must first trade `pierce` ticks beyond the line, then we enter
+    (stop order) when it trades back to the line. Long at the range low, short at the range high."""
+    P, G, T = day["P"], day["G"], day["T"]
+    i = int(np.searchsorted(T, cfg["trade_start"])); end = int(np.searchsorted(T, cfg["trade_end"]))
+    if i >= end: return []
+    P = P[:end]; G = G[:end]; T = T[:end]
+    pr = cfg["pierce"] * TICK; sl, tp = cfg["sl"] * TICK, cfg["tp"] * TICK
+    used = {1: False, -1: False}; out = []; n = 0
+    while i < len(P) and n < cfg["max_trades"]:
+        cand = []
+        for side, lvl in ((1, lo), (-1, hi)):
+            if used[side]: continue
+            beyond = (P <= lvl - pr) if side > 0 else (P >= lvl + pr)
+            a = _first(beyond, i)
+            if a == -1: continue
+            back = (P >= lvl) if side > 0 else (P <= lvl)
+            f = _first(back, a + 1)
+            if f != -1: cand.append((f, side, lvl))
+        if not cand: break
+        k, dirn, lvl = min(cand)
+        entry = P[k] if G[k] else lvl                    # stop entry: slips to the open on a gap
+        used[dirn] = True; n += 1
+        tpx = tp * (tp_mult_dir.get(dirn, 1.0) if tp_mult_dir else 1.0)
+        tp_px = entry + dirn * tpx; sl_px = entry - dirn * sl
+        trig, off = cfg["be_trig"] * TICK, cfg["be_off"] * TICK
+        seg = P[k + 1:]
+        tp_hit = (seg >= tp_px + TICK) if dirn > 0 else (seg <= tp_px - TICK)
+        sl_hit = (seg <= sl_px) if dirn > 0 else (seg >= sl_px)
+        m_tp, m_sl = _first(tp_hit, 0), _first(sl_hit, 0)
+        fav = (P[k:] - entry) * dirn; tt = _first(fav >= trig, 0)
+        first = min([x for x in (m_tp, m_sl) if x != -1], default=-1)
+        exit_rel = None; kind = None; bes = entry + dirn * off
+        if tt != -1 and (first == -1 or first + 1 > tt):
+            seg2 = P[k + tt + 1:]
+            be_m = (seg2 <= bes) if dirn > 0 else (seg2 >= bes)
+            tp2 = (seg2 >= tp_px + TICK) if dirn > 0 else (seg2 <= tp_px - TICK)
+            a1, a2 = _first(tp2, 0), _first(be_m, 0)
+            if a1 != -1 and (a2 == -1 or a1 < a2): exit_rel, kind = k + tt + 1 + a1, "TP"
+            elif a2 != -1: exit_rel, kind = k + tt + 1 + a2, "BE"
+        elif first != -1:
+            exit_rel = k + 1 + first; kind = "TP" if first == m_tp else "SL"
+        if exit_rel is None: x = len(P) - 1; px = P[x]; kind = "EOD"
+        else:
+            x = exit_rel
+            px = tp_px if kind == "TP" else (P[x] if G[x] else (sl_px if kind == "SL" else bes))
+        out.append((dirn, entry, px, kind, (px - entry) * dirn / TICK, int(T[k]), int(T[x]), kind == "BE"))
+        i = x
+    return out
