@@ -47,3 +47,12 @@ sandbox      = true        # true = Webull test environment. Set false only afte
 paper        = true        # true = LIVE Webull prices, simulated fills, no orders sent (paper trading)
 exit_after_session = true # stop after the trade window; schedule the bot to start again each morning
 poll_seconds = 2.0         # price poll interval
+
+[email]                    # daily P&L email after the session (today / week-to-date / month-to-date)
+enabled   = false
+to        = "you@example.com"
+from      = "you@gmail.com"
+smtp_host = "smtp.gmail.com"
+smtp_port = 587
+# The password is NOT stored here: set the SMTP_PASSWORD environment variable.
+# For Gmail use an App Password (Google Account > Security > 2-Step Verification > App passwords).

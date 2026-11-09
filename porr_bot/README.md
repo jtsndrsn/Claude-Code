@@ -64,6 +64,13 @@ Live Webull prices, simulated fills, **no orders sent**. Trades go to `trades.cs
    The bot loads the VIX regime and daily trend, trades 08:30-11:00, then exits by itself.
 5. Once a week, compare `trades.csv` with TradingView's List of Trades for the same days.
 
+### Daily P&L email
+After the session the bot emails today's trades plus week-to-date and month-to-date P&L (net of commission).
+1. In `config.toml` set `[email] enabled = true`, `to` and `from`.
+2. Gmail: create an App Password (Google Account > Security > 2-Step Verification > App passwords) and set it
+   as the `SMTP_PASSWORD` environment variable (never in the config file).
+3. Test any time: `python run.py report --config config.toml` (add `--date 2026-11-06` for a past day).
+
 ### Emergency stop
 Create a file named `STOP` in this folder. The bot cancels its orders, closes any position at market and exits.
 

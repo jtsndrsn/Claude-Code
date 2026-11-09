@@ -15,7 +15,7 @@ import sys
 import time as _time
 import tomllib
 from dataclasses import fields
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from broker import PaperBroker
@@ -114,6 +114,10 @@ def live(cfg: Config, raw: dict, tz: str) -> None:
         if wb.get("exit_after_session", True) and eng.eod_done and eng.pos is None and \
                 now_ct.time() >= (datetime.combine(now_ct.date(), cfg.trade_end) + timedelta(minutes=5)).time():
             log.warning("Trade window over and flat: exiting for today")
+            from report import daily_report
+            daily_report(cfg.trade_log, raw.get("email", {}), now_ct.date(),
+                         "paper" if paper else ("sandbox" if sandbox else "LIVE"),
+                         regime="BREAKOUT (VIX drop)" if eng.breakout_day else "fade")
             break
         if os.path.exists(stop_file):
             log.warning("STOP file found: cancelling and flattening")
@@ -142,10 +146,11 @@ def live(cfg: Config, raw: dict, tz: str) -> None:
 
 def main() -> None:
     ap = argparse.ArgumentParser(description="PORR v2.0 bot")
-    ap.add_argument("mode", choices=["replay", "live"])
+    ap.add_argument("mode", choices=["replay", "live", "report"])
     ap.add_argument("--config", default=None)
     ap.add_argument("--csv", help="TradingView 1-minute export for replay")
     ap.add_argument("--tz", default="America/Chicago")
+    ap.add_argument("--date", help="report: day to report (default today)")
     ap.add_argument("-v", "--verbose", action="store_true")
     a = ap.parse_args()
     logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO,
@@ -156,6 +161,10 @@ def main() -> None:
             sys.exit("--csv is required for replay")
         replay(cfg, a.csv, a.tz)
         print(f"Done. Trades written to {cfg.trade_log}")
+    elif a.mode == "report":
+        from report import daily_report
+        day = date.fromisoformat(a.date) if a.date else datetime.now(ZoneInfo(a.tz)).date()
+        print(daily_report(cfg.trade_log, raw.get("email", {}), day, "report"))
     else:
         live(cfg, raw, a.tz)
 
