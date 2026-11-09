@@ -34,10 +34,11 @@ class Bar:
     high: float
     low: float
     close: float
+    length: timedelta = timedelta(minutes=1)   # bar duration (1-second data: timedelta(seconds=1))
 
     @property
     def end(self) -> datetime:
-        return self.start + timedelta(minutes=1)
+        return self.start + self.length
 
 
 @dataclass
