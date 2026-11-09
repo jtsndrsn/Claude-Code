@@ -156,3 +156,70 @@ def sim_day_reclaim(day, hi, lo, cfg, tp_mult_dir=None):
         out.append((dirn, entry, px, kind, (px - entry) * dirn / TICK, int(T[k]), int(T[x]), kind == "BE"))
         i = x
     return out
+
+
+def _manage_exit(P, G, k, dirn, entry, sl, tpx, be_trig, be_off):
+    """exit after an entry at tick k. Returns (x, px, kind)."""
+    tp_px = entry + dirn * tpx; sl_px = entry - dirn * sl
+    seg = P[k + 1:]
+    tp_hit = (seg >= tp_px + TICK) if dirn > 0 else (seg <= tp_px - TICK)
+    sl_hit = (seg <= sl_px) if dirn > 0 else (seg >= sl_px)
+    m_tp, m_sl = _first(tp_hit, 0), _first(sl_hit, 0)
+    first = min([x for x in (m_tp, m_sl) if x != -1], default=-1)
+    if be_trig is not None:
+        fav = (P[k:] - entry) * dirn; tt = _first(fav >= be_trig, 0)
+        if tt != -1 and (first == -1 or first + 1 > tt):
+            bes = entry + dirn * be_off; seg2 = P[k + tt + 1:]
+            be_m = (seg2 <= bes) if dirn > 0 else (seg2 >= bes)
+            tp2 = (seg2 >= tp_px + TICK) if dirn > 0 else (seg2 <= tp_px - TICK)
+            a1, a2 = _first(tp2, 0), _first(be_m, 0)
+            if a1 != -1 and (a2 == -1 or a1 < a2): return k + tt + 1 + a1, tp_px, "TP"
+            if a2 != -1:
+                x = k + tt + 1 + a2; return x, (P[x] if G[x] else bes), "BE"
+            return len(P) - 1, P[-1], "EOD"
+    if first == -1: return len(P) - 1, P[-1], "EOD"
+    x = k + 1 + first
+    if first == m_tp: return x, tp_px, "TP"
+    return x, (P[x] if G[x] else sl_px), "SL"
+
+
+def sim_day_breakout(day, hi, lo, cfg):
+    """Breakout mode: buy stop above the range high (+offset), sell stop below the range low (-offset).
+    mode 'stop'   : enter on the break.
+    mode 'retest' : after price breaks `offset` ticks beyond the line, enter with a limit back AT the line.
+    One trade per side; the opposite side can still trigger after the first trade ends (max_trades)."""
+    P, G, T = day["P"], day["G"], day["T"]
+    i = int(np.searchsorted(T, cfg["trade_start"])); end = int(np.searchsorted(T, cfg["trade_end"]))
+    if i >= end: return []
+    P = P[:end]; G = G[:end]; T = T[:end]
+    off = cfg["offset"] * TICK; sl = cfg["sl"] * TICK; tpx = cfg["tp"] * TICK
+    bt = cfg["be_trig"] * TICK if cfg.get("be_trig") else None; bo = cfg.get("be_off", 0) * TICK
+    used = {1: False, -1: False}; out = []; n = 0
+    while i < len(P) and n < cfg["max_trades"]:
+        cand = []
+        for side in (1, -1):
+            if used[side]: continue
+            line = hi if side > 0 else lo
+            trig = line + side * off
+            if cfg["mode"] == "stop":
+                # stop order must be placed while price is still inside (below a buy stop)
+                inside = (P < trig) if side > 0 else (P > trig)
+                a = _first(inside, i)
+                if a == -1: continue
+                hit = (P >= trig) if side > 0 else (P <= trig)
+                f = _first(hit, a + 1)
+                if f != -1: cand.append((f, side, P[f] if G[f] else trig))
+            else:  # retest
+                beyond = (P >= trig) if side > 0 else (P <= trig)
+                a = _first(beyond, i)
+                if a == -1: continue
+                back = (P <= line - TICK) if side > 0 else (P >= line + TICK)     # limit at the line, 1 tick through
+                f = _first(back, a + 1)
+                if f != -1: cand.append((f, side, line))
+        if not cand: break
+        k, dirn, entry = min(cand)
+        used[dirn] = True; n += 1
+        x, px, kind = _manage_exit(P, G, k, dirn, entry, sl, tpx, bt, bo)
+        out.append((dirn, entry, px, kind, (px - entry) * dirn / TICK, int(T[k]), int(T[x]), kind == "BE"))
+        i = x
+    return out

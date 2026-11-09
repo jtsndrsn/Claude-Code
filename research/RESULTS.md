@@ -60,3 +60,20 @@ News events (Webull macro calendar) for the 34 worst and 35 best Setup-A days: `
 - Pierce-and-reclaim entries (enter after price trades through the line and back) performed about the same
   as Setup A, not better.
 - Fear & Greed index could not be included (CNN blocks automated access).
+
+## Breakout mode on VIX-drop days (VIX closed >0.9 pts lower the previous day)
+96 such days (56 in 2025, 40 in 2026). Every one broke at least one range line before 11:00;
+46 broke only one side. Fading these days lost money (A -$14.5k, B -$16.9k).
+800 breakout configs tested (`breakout_test.py`): buy stop at range high / sell stop at range low
+("stop") or limit back at the line after a break ("retest"), offset 0-80, SL 60-200, R:R 1-4, BE on/off,
+1-2 trades per day. 284 were profitable in both years; entering right AT the line with a stop order,
+wider stops (150-200) and bigger targets (R:R 3-4) were best.
+
+| Combined system (fade normal days, breakout on VIX-drop days) | 2025 | 2026 | Total | Max DD | Losing months |
+|---|---|---|---|---|---|
+| A, skip VIX-drop days | +$39,613 | +$47,312 | +$86,925 | $8,072 | 4/22 |
+| A + breakout (stop @ line, SL 200 / TP 800, BE 200->100, max 2) | +$54,870 | +$75,370 | +$130,240 | $7,819 | 1/22 |
+| A + breakout picked on 2025 only (stop @ line, SL 150 / TP 450, no BE) | +$58,981 | +$54,485 | +$113,466 | $7,432 | 3/22 |
+| B, skip VIX-drop days | +$41,559 | +$63,056 | +$104,615 | $13,031 | 7/22 |
+| B + breakout (stop @ line, SL 200 / TP 800, BE 200->100, max 2) | +$56,816 | +$91,114 | +$147,930 | $8,587 | 4/22 |
+| B + breakout picked on 2025 only | +$60,927 | +$70,229 | +$131,156 | $11,096 | 3/22 |
