@@ -1,6 +1,6 @@
-"""PORR v1.3.2 strategy engine (broker-agnostic).
+"""PORR v2.0 strategy engine (broker-agnostic).
 
-Mirrors strategies/porr.pine v1.3.2:
+Mirrors strategies/porr.pine v2.0:
   * Range = high/low of the 1-minute bars inside the range window (default 07:30-08:30 CT).
   * From the trade-window open, rest a BUY limit at range low (- entry delay) and a SELL limit
     at range high (+ entry delay). First fill cancels the other (manual OCA).
@@ -24,7 +24,7 @@ from datetime import datetime, time, timedelta
 
 log = logging.getLogger("porr.engine")
 
-ENTRY_TAGS = ("Long", "Short", "Flip Long", "Flip Short")
+ENTRY_TAGS = ("Long", "Short", "Flip Long", "Flip Short", "BO Long", "BO Short")
 
 
 @dataclass
@@ -55,32 +55,41 @@ class Fill:
 class Config:
     symbol: str = "MNQZ6"
     tick: float = 0.25
-    range_start: time = time(7, 30)
+    range_start: time = time(7, 0)
     range_end: time = time(8, 30)
     trade_start: time = time(8, 30)
-    trade_end: time = time(15, 0)
+    trade_end: time = time(11, 0)
     flat_at_end: bool = True
-    tp_ticks: int = 400
-    sl_ticks: int = 400
-    use_be: bool = False
+    tp_ticks: int = 500
+    sl_ticks: int = 100
+    use_be: bool = True
     use_line_tp: bool = False        # TP at the opposite range line (overrides tp/trend TP; not flips)
     be_trigger: int = 100
-    be_offset: int = 3
-    use_trend_tp: bool = False
-    tp_trend_ticks: int = 600
-    trend_minutes: int = 60
+    be_offset: int = 50
+    use_trend_tp: bool = True
+    tp_trend_ticks: int = 750
+    trend_minutes: int = 1440       # used only when no external daily trend is given
     trend_len: int = 50
     use_flip: bool = False
     flip_tp: int = 100
     flip_sl: int = 100
-    contracts: int = 1
+    contracts: int = 10
     max_trades: int = 4
     one_per_level: bool = True
-    skip_broken: bool = True         # skip a line for the day once price trades through it unfilled
+    skip_broken: bool = False        # skip a line for the day once price trades through it unfilled
     allow_long: bool = True
     allow_short: bool = True
-    entry_delay: int = 24
+    entry_delay: int = 10
     # Safety: hard cap on contracts per order, regardless of `contracts`.
+    # VIX regime: after VIX closes > vix_drop points lower, trade BREAKOUTS of the range instead
+    use_vix_switch: bool = True
+    vix_drop: float = 0.9
+    bo_tp: int = 800
+    bo_sl: int = 200
+    bo_use_be: bool = True
+    bo_be_trigger: int = 200
+    bo_be_offset: int = 100
+    bo_max_trades: int = 2
     max_contracts_cap: int = 1
     trade_log: str = "trades.csv"
 
@@ -99,6 +108,9 @@ class Position:
     sl_price: float = 0.0
     be_done: bool = False
     entry_ts: datetime | None = None
+    use_be: bool = False
+    be_trigger: int = 0
+    be_offset: int = 0
 
 
 class Engine:
@@ -139,12 +151,20 @@ class Engine:
     def in_trade(self, ts: datetime) -> bool:
         return self.cfg.trade_start <= self._t(ts) < self.cfg.trade_end
 
+    def set_day_context(self, breakout: bool | None = None, trend: int | None = None) -> None:
+        """Daily inputs computed outside the engine: breakout = VIX-drop day (from the VIX close
+        series), trend = +1/-1 from the daily EMA. Call before the range is final each day."""
+        self.breakout_day = bool(breakout) and self.cfg.use_vix_switch
+        self.ext_trend = trend
+
     @property
     def trend_up(self) -> bool:
+        if getattr(self, "ext_trend", None) is not None: return self.ext_trend > 0
         return self.trend_ema is not None and self.trend_close > self.trend_ema
 
     @property
     def trend_dn(self) -> bool:
+        if getattr(self, "ext_trend", None) is not None: return self.ext_trend < 0
         return self.trend_ema is not None and self.trend_close < self.trend_ema
 
     # ------------------------------------------------------------------ bars
@@ -225,6 +245,9 @@ class Engine:
         if not can:
             self._cancel_entries()
             return
+        if getattr(self, "breakout_day", False):
+            self._manage_breakout(price)
+            return
         long_lvl = self.range_low - c.entry_delay * tick
         short_lvl = self.range_high + c.entry_delay * tick
         wanted = {
@@ -248,6 +271,21 @@ class Engine:
                 self.working[tag] = self.broker.place_limit(tag, side, self.qty, self._round(lvl))
                 log.info("Resting %s %s %s @ %s", tag, side, self.qty, lvl)
 
+    def _manage_breakout(self, price: float) -> None:
+        """VIX-drop day: buy stop at the range high, sell stop at the range low, one trade per side,
+        placed only while price is still inside the range."""
+        c = self.cfg
+        if self.trades_today >= c.bo_max_trades:
+            self._cancel_entries()
+            return
+        for tag, side, lvl, inside, allow in (("BO Long", "BUY", self.range_high, price < self.range_high, c.allow_long),
+                                              ("BO Short", "SELL", self.range_low, price > self.range_low, c.allow_short)):
+            if not allow or tag in self.used:
+                self._cancel_entry(tag)
+            elif tag not in self.working and inside:
+                self.working[tag] = self.broker.place_stop(tag, side, self.qty, self._round(lvl))
+                log.info("Breakout stop %s %s %s @ %s", tag, side, self.qty, lvl)
+
     def _cancel_entry(self, tag: str) -> None:
         oid = self.working.pop(tag, None)
         if oid:
@@ -260,8 +298,8 @@ class Engine:
     def _manage_position(self, price: float) -> None:
         p, c, tick = self.pos, self.cfg, self.cfg.tick
         p.best = max(p.best, price) if p.dir > 0 else min(p.best, price)
-        if c.use_be and not p.be_done and (p.best - p.entry) * p.dir >= c.be_trigger * tick:
-            new_stop = self._round(p.entry + p.dir * c.be_offset * tick)
+        if p.use_be and not p.be_done and (p.best - p.entry) * p.dir >= p.be_trigger * tick:
+            new_stop = self._round(p.entry + p.dir * p.be_offset * tick)
             p.be_done = True
             if (price - new_stop) * p.dir <= 0:
                 # Price already back through the breakeven level: a stop there would be
@@ -290,7 +328,11 @@ class Engine:
         self._cancel_entries()                       # manual OCA
         c = self.cfg
         d = 1 if f.side == "BUY" else -1
-        if f.tag.startswith("Flip"):
+        use_be, be_t, be_o = c.use_be, c.be_trigger, c.be_offset
+        if f.tag.startswith("BO"):
+            tp, sl = c.bo_tp, c.bo_sl
+            use_be, be_t, be_o = c.bo_use_be, c.bo_be_trigger, c.bo_be_offset
+        elif f.tag.startswith("Flip"):
             tp, sl = c.flip_tp, c.flip_sl
         else:
             with_trend = (d > 0 and self.trend_up) or (d < 0 and self.trend_dn)
@@ -301,7 +343,8 @@ class Engine:
             sl = c.sl_ticks
         self.trades_today += 1
         self.used.add(f.tag)
-        p = Position(f.tag, d, f.qty, f.price, tp, sl, best=f.price, entry_ts=f.ts)
+        p = Position(f.tag, d, f.qty, f.price, tp, sl, best=f.price, entry_ts=f.ts,
+                     use_be=use_be, be_trigger=be_t, be_offset=be_o)
         exit_side = "SELL" if d > 0 else "BUY"
         p.sl_price = self._round(f.price - d * sl * c.tick)
         p.tp_id = self.broker.place_limit("TP", exit_side, f.qty, self._round(f.price + d * tp * c.tick))

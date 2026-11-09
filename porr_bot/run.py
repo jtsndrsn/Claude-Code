@@ -85,7 +85,21 @@ def live(cfg: Config, raw: dict, tz: str) -> None:
     log.info("Warm-up: %d bars, range_done=%s high=%s low=%s", len(warm), eng.range_done,
              eng.range_high, eng.range_low)
 
+    ctx_day = None
     while True:
+        today = datetime.now(ZoneInfo(tz)).date()
+        if ctx_day != today and datetime.now(ZoneInfo(tz)).time() >= time(6, 30):
+            # once a day before the range ends: VIX regime (breakout day?) and daily EMA trend
+            try:
+                from feeds import vix_change_before, daily_trend
+                chg = vix_change_before(today)
+                trend = daily_trend(feed.md, cfg.symbol, today, cfg.trend_len)
+                eng.set_day_context(breakout=chg is not None and chg < -cfg.vix_drop, trend=trend)
+                log.info("Day context %s: VIX change %s -> %s day, daily trend %+d", today, chg,
+                         "BREAKOUT" if eng.breakout_day else "fade", trend)
+                ctx_day = today
+            except Exception:
+                log.exception("could not load day context (VIX / trend); retrying")
         if os.path.exists(stop_file):
             log.warning("STOP file found: cancelling and flattening")
             eng._cancel_entries()
@@ -112,7 +126,7 @@ def live(cfg: Config, raw: dict, tz: str) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="PORR v1.3 bot")
+    ap = argparse.ArgumentParser(description="PORR v2.0 bot")
     ap.add_argument("mode", choices=["replay", "live"])
     ap.add_argument("--config", default=None)
     ap.add_argument("--csv", help="TradingView 1-minute export for replay")

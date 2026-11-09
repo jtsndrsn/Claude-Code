@@ -1,23 +1,23 @@
 # Copy to config.toml and edit.  API keys are NOT stored here:
 # set the environment variables WEBULL_APP_KEY and WEBULL_APP_SECRET instead.
 
-[strategy]                 # same settings as the TradingView v1.3 inputs
+[strategy]                 # same settings as the TradingView v2.0 inputs
 symbol          = "MNQZ6"  # Webull contract code: product + month letter + 1-digit year (Z6 = Dec 2026). Roll each quarter!
 tick            = 0.25
-range_start     = "07:30"  # America/Chicago
+range_start     = "07:00"  # America/Chicago
 range_end       = "08:30"
 trade_start     = "08:30"
-trade_end       = "15:00"
+trade_end       = "11:00"
 flat_at_end     = true
-tp_ticks        = 400
-sl_ticks        = 400
-use_be          = false
+tp_ticks        = 500
+sl_ticks        = 100
+use_be          = true
 use_line_tp     = false    # true = TP at the opposite range line
 be_trigger      = 100
-be_offset       = 3
-use_trend_tp    = false
-tp_trend_ticks  = 600
-trend_minutes   = 60
+be_offset       = 50
+use_trend_tp    = true
+tp_trend_ticks  = 750
+trend_minutes   = 1440     # live mode uses Webull daily bars for the trend
 trend_len       = 50
 use_flip        = false
 flip_tp         = 100
@@ -26,10 +26,19 @@ contracts       = 1
 max_contracts_cap = 1      # hard safety cap per order - raise deliberately
 max_trades      = 4
 one_per_level   = true
-skip_broken     = true     # skip a line once price breaks through it without our fill
+skip_broken     = false    # skip a line once price breaks through it without our fill
 allow_long      = true
 allow_short     = true
-entry_delay     = 24
+entry_delay     = 10
+# VIX regime: after VIX closes > vix_drop points lower, trade range BREAKOUTS instead of fades
+use_vix_switch  = true
+vix_drop        = 0.9
+bo_tp           = 800
+bo_sl           = 200
+bo_use_be       = true
+bo_be_trigger   = 200
+bo_be_offset    = 100
+bo_max_trades   = 2
 trade_log       = "trades.csv"
 
 [webull]

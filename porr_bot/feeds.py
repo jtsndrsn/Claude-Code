@@ -79,3 +79,34 @@ class WebullFeed:
                 out.append(bar)
         out.sort(key=lambda x: x.start)
         return out
+
+
+# ---------------------------------------------------------------------------------------------
+# Daily context for the engine (live): VIX regime + daily EMA trend
+VIX_CSV_URL = "https://cdn.cboe.com/api/global/us_indices/daily_prices/VIX_History.csv"
+
+def vix_change_before(day, url: str = VIX_CSV_URL) -> float | None:
+    """VIX close of the last trading day before `day` minus the close of the day before that."""
+    import urllib.request
+    rows = []
+    with urllib.request.urlopen(url, timeout=30) as resp:
+        for line in resp.read().decode().splitlines()[1:]:
+            d, _, _, _, c = line.split(",")
+            m, dd, y = d.split("/")
+            rows.append((f"{y}-{m}-{dd}", float(c)))
+    prior = [c for d, c in rows if d < day.isoformat()]
+    return prior[-1] - prior[-2] if len(prior) >= 2 else None
+
+
+def daily_trend(md, symbol: str, day, length: int = 50) -> int:
+    """+1 if the last daily close before `day` is above its EMA(length), -1 if below.
+    `md` is DataClient(...).futures_market_data. Uses the contract's own daily history."""
+    res = md.get_futures_history_bars(symbol, "US_FUTURES", "D", count=str(length * 4))
+    if res.status_code != 200:
+        raise RuntimeError(f"daily bars failed {res.status_code}: {res.text}")
+    bars = sorted(res.json()[0]["result"], key=lambda b: b["time"])
+    closes = [float(b["close"]) for b in bars if b["time"][:10] < day.isoformat()]
+    if not closes: return 0
+    a = 2 / (length + 1); e = closes[0]
+    for c in closes[1:]: e = a * c + (1 - a) * e
+    return 1 if closes[-1] > e else -1
