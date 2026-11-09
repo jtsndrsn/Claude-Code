@@ -18,9 +18,9 @@ Runs the TradingView strategy `strategies/porr.pine` (v2.0) automatically on Web
 ## Daily regime (v2.0)
 Each morning the bot loads yesterday's VIX change (CBOE public daily file) and the daily EMA50 trend
 (Webull daily bars). If VIX closed more than `vix_drop` (0.9) points lower, the day trades **breakouts**
-of the 07:00-08:30 range (buy stop at the high, sell stop at the low, SL 200 / TP 800, BE 200->100,
+of the 07:00-08:30 range (buy stop at the high, sell stop at the low, SL 300 / TP 800, BE 200->100,
 max 2 trades); otherwise it **fades** the lines (SL 100 / TP 500, BE 100->50, with-trend TP 750).
-Backtest on Databento 1-second data, Feb 2025 - Nov 2026, 10 MNQ: +$130k, max drawdown $7.8k
+Backtest on Databento 1-second data, Feb 2025 - Nov 2026, 10 MNQ: +$139k, max drawdown $9.2k
 (see `research/RESULTS.md`; engine and research simulator agree to within $30).
 
 ## How it trades

@@ -77,3 +77,12 @@ wider stops (150-200) and bigger targets (R:R 3-4) were best.
 | B, skip VIX-drop days | +$41,559 | +$63,056 | +$104,615 | $13,031 | 7/22 |
 | B + breakout (stop @ line, SL 200 / TP 800, BE 200->100, max 2) | +$56,816 | +$91,114 | +$147,930 | $8,587 | 4/22 |
 | B + breakout picked on 2025 only | +$60,927 | +$70,229 | +$131,156 | $11,096 | 3/22 |
+
+## Breakout stop-loss check (v2.1)
+TP 800 / BE 200->100 kept, breakout SL varied (96 VIX-drop days; system = fade A on other days):
+| Breakout SL | 2025 | 2026 | Breakout total | Win % | System total | Max DD |
+|---|---|---|---|---|---|---|
+| 200 | +$15,257 | +$28,058 | +$43,315 | 60% | +$130,240 | $7,819 |
+| 250 | +$19,475 | +$27,058 | +$46,533 | 65% | +$133,458 | $9,990 |
+| 300 (v2.1 default) | +$21,200 | +$30,558 | +$51,758 | 68% | +$138,683 | $9,240 |
+Scaling the BE trigger with the stop (1R) was worse in every case; the fixed 200-tick BE trigger is what helps.

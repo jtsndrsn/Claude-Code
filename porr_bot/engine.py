@@ -85,7 +85,7 @@ class Config:
     use_vix_switch: bool = True
     vix_drop: float = 0.9
     bo_tp: int = 800
-    bo_sl: int = 200
+    bo_sl: int = 300
     bo_use_be: bool = True
     bo_be_trigger: int = 200
     bo_be_offset: int = 100

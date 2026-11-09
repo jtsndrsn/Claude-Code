@@ -1,5 +1,6 @@
 //@version=6
-// Pre-Open Range Reversal  -  Version 2.0
+// Pre-Open Range Reversal  -  Version 2.1
+// v2.1: breakout stop loss default 300 ticks (was 200): better in both 2025 and 2026.
 // v2.0: optimised defaults (07:00-08:30 range, 08:30-11:00 window, SL 100 / TP 500, BE 100->50,
 //       entry delay 10, with-trend TP 750 on daily EMA50) and a VIX regime switch: after VIX
 //       closes >0.9 pts lower, trade range BREAKOUTS (stop @ line, SL 200 / TP 800, BE 200->100).
@@ -65,7 +66,7 @@ useVixSwitch = input.bool(true, "Breakout mode after a VIX drop", group = grpB, 
 vixSym       = input.symbol("CBOE:VIX", "VIX symbol", group = grpB)
 vixDrop      = input.float(0.9, "VIX drop threshold (points)", minval = 0, step = 0.1, group = grpB)
 boTp         = input.int(800, "Breakout take profit (ticks)", minval = 1, group = grpB)
-boSl         = input.int(200, "Breakout stop loss (ticks)", minval = 1, group = grpB)
+boSl         = input.int(300, "Breakout stop loss (ticks)", minval = 1, group = grpB)
 boUseBE      = input.bool(true, "Breakout breakeven stop", group = grpB)
 boBeTrig     = input.int(200, "Breakout BE trigger (ticks)", minval = 1, group = grpB)
 boBeOff      = input.int(100, "Breakout BE offset (ticks)", group = grpB)
