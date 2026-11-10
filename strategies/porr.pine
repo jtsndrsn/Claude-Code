@@ -1,5 +1,6 @@
 //@version=6
-// Pre-Open Range Reversal  -  Version 2.1
+// Pre-Open Range Reversal  -  Version 2.2
+// v2.2: optional webhook alerts that mirror every order intent to the TradingView -> Webull bridge.
 // v2.1: breakout stop loss default 300 ticks (was 200): better in both 2025 and 2026.
 // v2.0: optimised defaults (07:00-08:30 range, 08:30-11:00 window, SL 100 / TP 500, BE 100->50,
 //       entry delay 10, with-trend TP 750 on daily EMA50) and a VIX regime switch: after VIX
@@ -71,6 +72,10 @@ boUseBE      = input.bool(true, "Breakout breakeven stop", group = grpB)
 boBeTrig     = input.int(200, "Breakout BE trigger (ticks)", minval = 1, group = grpB)
 boBeOff      = input.int(100, "Breakout BE offset (ticks)", group = grpB)
 boMaxTrades  = input.int(2, "Breakout max trades per day", minval = 1, maxval = 2, group = grpB, tooltip = "One per side: after the first breakout trade ends, the other side can still trigger.")
+
+grpW = "Webhook bridge (TradingView -> Webull)"
+useBridge  = input.bool(false, "Send order alerts to the Webull bridge", group = grpW, tooltip = "Sends a JSON alert whenever the strategy places, moves or cancels an entry order, moves a stop to breakeven, or flattens at the end of the window. Create ONE alert on this strategy with condition 'alert() function calls only' and the bridge server's webhook URL.")
+bridgePass = input.string("change-me", "Bridge passphrase", group = grpW, tooltip = "Must match BRIDGE_PASSPHRASE on the bridge server. Alerts with a wrong passphrase are ignored.")
 
 grpT = "Trade rules"
 contracts   = input.int(10, "Contracts per trade", minval = 1, group = grpT)
@@ -275,6 +280,36 @@ if boShortReady
 else
     strategy.cancel("BO Short")
 
+// ---------- Webhook bridge alerts (realtime only) ----------
+// One JSON alert per change of intent: place / move / cancel per entry tag. varip keeps the state
+// across intrabar ticks so an unchanged order is not re-sent on every tick.
+f_bmsg(string action, string tag, string side, string typ, float price, float tpT, float slT, float beT, float beO, bool ube) =>
+    '{"pass":"' + bridgePass + '","id":"' + tag + "-" + action + "-" + str.tostring(time) + "-" + str.tostring(price, format.mintick) +
+     '","action":"' + action + '","tag":"' + tag + '","side":"' + side + '","type":"' + typ + '","price":' + str.tostring(price, format.mintick) +
+     ',"qty":' + str.tostring(contracts) + ',"tp":' + str.tostring(tpT) + ',"sl":' + str.tostring(slT) +
+     ',"be_trig":' + str.tostring(beT) + ',"be_off":' + str.tostring(beO) + ',"use_be":' + (ube ? "true" : "false") + '}'
+varip array<float> armedPx = array.new_float(6, na)
+f_sync(int idx, bool ready, string tag, string side, string typ, float price, float tpT, float slT, float beT, float beO, bool ube) =>
+    if useBridge and barstate.isrealtime
+        cur = array.get(armedPx, idx)
+        if ready and (na(cur) or cur != price)
+            alert(f_bmsg("place", tag, side, typ, price, tpT, slT, beT, beO, ube), alert.freq_all)
+            array.set(armedPx, idx, price)
+        else if not ready and not na(cur)
+            alert(f_bmsg("cancel", tag, side, typ, cur, 0, 0, 0, 0, false), alert.freq_all)
+            array.set(armedPx, idx, na)
+lineTpL = useLineTP ? math.round((rangeHigh - longLvl) / tick) : tpLongT
+lineTpS = useLineTP ? math.round((shortLvl - rangeLow) / tick) : tpShortT
+f_sync(0, longReady,      "Long",       "BUY",  "LIMIT", longLvl,   lineTpL, slTicks, beTrigger, beOffset, useBE)
+f_sync(1, shortReady,     "Short",      "SELL", "LIMIT", shortLvl,  lineTpS, slTicks, beTrigger, beOffset, useBE)
+f_sync(2, flipLongReady,  "Flip Long",  "BUY",  "LIMIT", rangeHigh, flipTp,  flipSl,  beTrigger, beOffset, useBE)
+f_sync(3, flipShortReady, "Flip Short", "SELL", "LIMIT", rangeLow,  flipTp,  flipSl,  beTrigger, beOffset, useBE)
+f_sync(4, boLongReady,    "BO Long",    "BUY",  "STOP",  rangeHigh, boTp,    boSl,    boBeTrig,  boBeOff,  boUseBE)
+f_sync(5, boShortReady,   "BO Short",   "SELL", "STOP",  rangeLow,  boTp,    boSl,    boBeTrig,  boBeOff,  boUseBE)
+varip bool beAlertSent = false
+if strategy.position_size == 0
+    beAlertSent := false
+
 // ---------- Exits / breakeven ----------
 // Best price reached since the fill. With "On history bar tick" on, this updates on every
 // simulated tick inside the bar, so the stop moves to breakeven intrabar (not at bar close).
@@ -312,16 +347,24 @@ if strategy.position_size > 0
     sl = entryPx - nz(tradeSl, slTicks) * tick
     if tradeUseBE and bestHigh >= entryPx + nz(tradeBeT, beTrigger) * tick
         sl := entryPx + nz(tradeBeO, beOffset) * tick
+        if useBridge and barstate.isrealtime and not beAlertSent
+            alert('{"pass":"' + bridgePass + '","id":"be-' + str.tostring(time) + '","action":"breakeven","tag":"' + tradeId + '"}', alert.freq_all)
+            beAlertSent := true
     strategy.exit(tradeId + " Exit", tradeId, limit = tp, stop = sl, comment_profit = f_exitTxt("TP", tp, entryPx, 1, strategy.position_size), comment_loss = f_exitTxt("SL", sl, entryPx, 1, strategy.position_size))
 else if strategy.position_size < 0
     tp = useLineTP and not str.startswith(tradeId, "Flip") and not str.startswith(tradeId, "BO") ? rangeLow : entryPx - nz(tradeTp, tpShortT) * tick
     sl = entryPx + nz(tradeSl, slTicks) * tick
     if tradeUseBE and bestLow <= entryPx - nz(tradeBeT, beTrigger) * tick
         sl := entryPx - nz(tradeBeO, beOffset) * tick
+        if useBridge and barstate.isrealtime and not beAlertSent
+            alert('{"pass":"' + bridgePass + '","id":"be-' + str.tostring(time) + '","action":"breakeven","tag":"' + tradeId + '"}', alert.freq_all)
+            beAlertSent := true
     strategy.exit(tradeId + " Exit", tradeId, limit = tp, stop = sl, comment_profit = f_exitTxt("TP", tp, entryPx, -1, -strategy.position_size), comment_loss = f_exitTxt("SL", sl, entryPx, -1, -strategy.position_size))
 
 // immediately = true: close at THIS bar's close, not the next bar's open (which after an early
 // close or the daily break would be in the next session).
+if useBridge and barstate.isrealtime and flatAtEnd and lastTradeBar and barstate.isconfirmed
+    alert('{"pass":"' + bridgePass + '","id":"eod-' + str.tostring(time) + '","action":"flatten"}', alert.freq_all)
 if flatAtEnd and lastTradeBar and barstate.isconfirmed
     strategy.close_all(comment = f_exitTxt("EOD", close, entryPx, int(math.sign(strategy.position_size)), math.abs(strategy.position_size)), immediately = true)
 // Safety net: never hold a position outside the trade window (e.g. an order that filled at the

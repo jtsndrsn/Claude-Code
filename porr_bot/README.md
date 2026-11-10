@@ -53,6 +53,23 @@ Trades go to `trades.csv`. Compare with the Strategy Tester's List of Trades.
 3. Put your `account_id` in `config.toml`. Keep `sandbox = true` and `paper = true` to start.
 4. `python run.py live --config config.toml`
 
+### TradingView -> Webull bridge (no Webull data subscription needed)
+TradingView runs the strategy and sends an alert for every order it wants; `bridge.py` places the same
+orders on Webull and manages TP/SL from Webull's actual fills. Fills, breakeven moves and the 11:00 CT
+flatten are handled even if an alert is late or missing (see the top of `bridge.py`).
+1. Run it on a machine TradingView can reach from the internet: a small cloud server (Ubuntu) is easiest.
+   Open port 80 in its firewall. A home PC would need router port forwarding.
+2. Environment variables on that machine: `BRIDGE_PASSPHRASE` (make up a long random phrase),
+   `WEBULL_PAPER_APP_KEY`, `WEBULL_PAPER_APP_SECRET`. In `config.toml`: `[webull] sandbox = true` and
+   `paper_account_id`.
+3. Start it: `python bridge.py --config config.toml`. Check `http://<server-ip>/` in a browser: it shows
+   `{"ok": true, ...}`.
+4. TradingView: in the PORR settings, "Webhook bridge" group, tick **Send order alerts** and enter the same
+   passphrase. Set Properties -> Script execution -> **On realtime bar tick** on. Then create ONE alert on the
+   strategy: Condition = PORR, **alert() function calls only**; Notifications -> **Webhook URL**
+   `http://<server-ip>/`; expiration open-ended.
+5. Every trade is written to `trades.csv` and the daily P&L email goes out after 11:05 CT.
+
 ### Paper trading (recommended first)
 Live Webull prices, simulated fills, **no orders sent**. Trades go to `trades.csv`, the day's log to `logs/`.
 1. Webull website -> OpenAPI Management: create a **production** App Key / Secret (market data needs it).

@@ -66,3 +66,10 @@ smtp_host = "smtp.gmail.com"
 smtp_port = 587
 # The password is NOT stored here: set the SMTP_PASSWORD environment variable.
 # For Gmail use an App Password (Google Account > Security > 2-Step Verification > App passwords).
+
+[bridge]                   # TradingView -> Webull bridge (python bridge.py --config config.toml)
+host = "0.0.0.0"
+port = 80                  # TradingView webhooks only call ports 80 (http) or 443 (https)
+poll_seconds = 1.0         # how often fills are checked on Webull
+# The passphrase is NOT stored here: set BRIDGE_PASSPHRASE (same text as in the TradingView script).
+# Orders go to the Webull PAPER account while [webull] sandbox = true.
