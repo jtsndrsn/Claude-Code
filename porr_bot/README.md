@@ -70,6 +70,22 @@ flatten are handled even if an alert is late or missing (see the top of `bridge.
    `http://<server-ip>/`; expiration open-ended.
 5. Every trade is written to `trades.csv` and the daily P&L email goes out after 11:05 CT.
 
+### Hosting the bridge on Render (recommended)
+1. Render -> New -> **Web Service** -> connect GitHub repo `jtsndrsn/Claude-Code`, branch `main`.
+2. Settings: Language **Python 3**, Region **Ohio**, Root Directory `porr_bot`,
+   Build `pip install -r requirements.txt`, Start `python bridge.py --config config.render.toml`,
+   Instance **Starter** (the free tier sleeps and misses alerts). Health check path `/`.
+3. Advanced -> **Add Disk**: mount path `/var/data`, 1 GB (keeps `trades.csv` and restart state).
+4. Environment variables (secrets are typed only into Render):
+   `PYTHON_VERSION=3.12.7`, `DATA_DIR=/var/data`, `WEBULL_SANDBOX=true`, `WEBULL_PAPER_APP_KEY`,
+   `WEBULL_PAPER_APP_SECRET`, `WEBULL_PAPER_ACCOUNT_ID`, `BRIDGE_PASSPHRASE`, `PORR_SYMBOL=MNQZ6`,
+   `PORR_MAX_CONTRACTS=1`, `EMAIL_TO`, `EMAIL_FROM`, `SMTP_PASSWORD`.
+5. After deploy, open `https://<name>.onrender.com/` -> `{"ok": true, ...}`. Use that URL as the TradingView webhook.
+
+Reliability: the bridge saves its state to the disk after every alert and fill; after a restart it reloads it,
+checks Webull, and re-places a missing stop (emailing you). Weekdays it emails "up and waiting" at 08:20 CT
+and warns at 08:40 CT if no TradingView alert has arrived since 08:00.
+
 ### Paper trading (recommended first)
 Live Webull prices, simulated fills, **no orders sent**. Trades go to `trades.csv`, the day's log to `logs/`.
 1. Webull website -> OpenAPI Management: create a **production** App Key / Secret (market data needs it).

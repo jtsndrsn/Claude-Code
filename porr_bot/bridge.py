@@ -56,14 +56,79 @@ class Pos:
 
 class Bridge:
     def __init__(self, broker, passphrase: str, tick: float = 0.25, max_qty: int = 1,
-                 trade_log: str = "trades.csv", tz: str = "America/Chicago", trade_end: time = time(11, 0)):
+                 trade_log: str = "trades.csv", tz: str = "America/Chicago", trade_end: time = time(11, 0),
+                 state_path: str | None = None, notify=None):
         self.broker, self.passphrase, self.tick, self.max_qty = broker, passphrase, tick, max_qty
         self.trade_log, self.tz, self.trade_end = trade_log, ZoneInfo(tz), trade_end
+        self.state_path = state_path
+        self.notify = notify or (lambda subject, body: log.warning("NOTIFY %s: %s", subject, body))
         self.lock = threading.RLock()
         self.working: dict[str, tuple[str, dict]] = {}       # tag -> (order_id, intent)
         self.pos: Pos | None = None
         self.seen: set[str] = set()
         self.eod_done_for = None
+        self.last_alert: datetime | None = None
+        self.heartbeat_for = None
+        self.silence_warned_for = None
+
+    # ------------------------------------------------------------------ state on disk (restart recovery)
+    def save(self) -> None:
+        if not self.state_path:
+            return
+        p = self.pos
+        st = {"working": {t: [oid, it] for t, (oid, it) in self.working.items()},
+              "pos": None if p is None else {"tag": p.tag, "dir": p.dir, "qty": p.qty, "entry": p.entry, "tp_id": p.tp_id,
+                                             "sl_id": p.sl_id, "sl_price": p.sl_price, "intent": p.intent,
+                                             "entry_ts": p.entry_ts.isoformat(), "be_done": p.be_done},
+              "eod_done_for": self.eod_done_for.isoformat() if self.eod_done_for else None}
+        tmp = self.state_path + ".tmp"
+        with open(tmp, "w") as fh:
+            json.dump(st, fh)
+        os.replace(tmp, self.state_path)
+
+    def restore(self) -> None:
+        """Load the saved state after a restart and reconcile it with Webull."""
+        if not self.state_path or not os.path.exists(self.state_path):
+            self._check_untracked_position(); return
+        with open(self.state_path) as fh:
+            st = json.load(fh)
+        for tag, (oid, it) in st.get("working", {}).items():
+            self.working[tag] = (oid, it); self.broker.adopt(oid, tag, it["side"], it["qty"])
+        if st.get("eod_done_for"):
+            self.eod_done_for = datetime.fromisoformat(st["eod_done_for"]).date() if "T" in st["eod_done_for"] else \
+                datetime.strptime(st["eod_done_for"], "%Y-%m-%d").date()
+        q = st.get("pos")
+        if q:
+            self.pos = Pos(q["tag"], q["dir"], q["qty"], q["entry"], q["tp_id"], q["sl_id"], q["sl_price"], q["intent"],
+                           datetime.fromisoformat(q["entry_ts"]), q["be_done"])
+            exit_side = "SELL" if q["dir"] > 0 else "BUY"
+            for oid, tg in ((q["tp_id"], "TP"), (q["sl_id"], "SL")):
+                if oid: self.broker.adopt(oid, tg, exit_side, q["qty"])
+            # make sure the stop is still working on Webull; if not (and we still hold the position) re-place it
+            try:
+                open_ids = self.broker.open_order_ids()
+                net = self.broker.net_position()
+                if q["sl_id"] not in open_ids and (net is None or abs(net) > 0):
+                    for _ in range(3):                       # let a missed exit fill show up first
+                        for f in self.broker.poll_fills(): self.on_fill(f)
+                    if self.pos is not None and self.pos.sl_id not in self.broker.open_order_ids():
+                        p = self.pos
+                        p.sl_id = self.broker.place_stop("SL", exit_side, p.qty, p.sl_price)
+                        self.notify("PORR bridge: stop re-placed after restart",
+                                    f"{p.tag} {p.qty} @ {p.entry}: stop was missing on Webull, re-placed at {p.sl_price}.")
+            except Exception as e:
+                self.notify("PORR bridge: CHECK POSITION", f"Restart recovery could not verify orders on Webull: {e}")
+        log.warning("state restored: position=%s working=%s", self.pos and self.pos.tag, list(self.working))
+        self.save()
+
+    def _check_untracked_position(self) -> None:
+        try:
+            net = self.broker.net_position()
+            if net:
+                self.notify("PORR bridge: UNTRACKED POSITION",
+                            f"Webull shows {net} contracts but the bridge has no saved state. Check the account now.")
+        except Exception:
+            log.exception("could not read positions")
 
     # ------------------------------------------------------------------ helpers
     def _r(self, px: float) -> float:
@@ -85,12 +150,13 @@ class Bridge:
                 self.seen.add(mid)
                 if len(self.seen) > 5000: self.seen = set(list(self.seen)[-2000:])
             act = msg.get("action")
+            self.last_alert = self.now()
             log.info("alert %s", {k: v for k, v in msg.items() if k != "pass"})
-            if act == "place": return self._place(msg)
-            if act == "cancel": return self._cancel(msg.get("tag"))
-            if act == "breakeven": return self._breakeven(msg.get("tag"))
-            if act == "flatten": return self._flatten_all("EOD")
-            return "unknown action"
+            res = ("unknown action" if act not in ("place", "cancel", "breakeven", "flatten") else
+                   self._place(msg) if act == "place" else self._cancel(msg.get("tag")) if act == "cancel" else
+                   self._breakeven(msg.get("tag")) if act == "breakeven" else self._flatten_all("EOD"))
+            self.save()
+            return res
 
     def _place(self, m: dict) -> str:
         tag = m.get("tag")
@@ -146,6 +212,7 @@ class Bridge:
                 self._on_entry(f)
             elif f.tag in ("TP", "SL", "EOD") and self.pos is not None:
                 self._on_exit(f)
+            self.save()
 
     def _on_entry(self, f: Fill) -> None:
         w = self.working.pop(f.tag, None)
@@ -189,6 +256,20 @@ class Bridge:
             if now.time() >= self.trade_end and self.eod_done_for != now.date() and now.weekday() < 5:
                 self._flatten_all("trade window end")
                 self.eod_done_for = now.date()
+                self.save()
+        # morning checks (weekdays): "I'm up" at 08:20, and a warning if no alerts have arrived by 08:40
+        if now.weekday() < 5:
+            if now.time() >= time(8, 20) and self.heartbeat_for != now.date() and now.time() < self.trade_end:
+                self.heartbeat_for = now.date()
+                self.notify("PORR bridge: up and waiting", f"{now:%Y-%m-%d %H:%M} CT - connected, "
+                            f"position: {self.pos.tag if self.pos else 'none'}, working orders: {list(self.working) or 'none'}.")
+            start = now.replace(hour=8, minute=0, second=0, microsecond=0)
+            if now.time() >= time(8, 40) and now.time() < self.trade_end and self.silence_warned_for != now.date() \
+                    and (self.last_alert is None or self.last_alert < start):
+                self.silence_warned_for = now.date()
+                self.notify("PORR bridge: NO ALERTS from TradingView",
+                            "No TradingView alert has arrived since 08:00 CT. Check that the TradingView alert is active "
+                            "and the chart is open/connected. The bridge will still flatten at the window end.")
 
 
 def make_handler(bridge: Bridge):
@@ -228,16 +309,36 @@ def main() -> None:
     wb, br = raw.get("webull", {}), raw.get("bridge", {})
     pw = os.environ.get("BRIDGE_PASSPHRASE")
     if not pw: sys.exit("Set the BRIDGE_PASSPHRASE environment variable (same text as in the TradingView script).")
-    if wb.get("sandbox", True):
-        k, s, acct = os.environ.get("WEBULL_PAPER_APP_KEY"), os.environ.get("WEBULL_PAPER_APP_SECRET"), wb["paper_account_id"]
+    sandbox = str(os.environ.get("WEBULL_SANDBOX", wb.get("sandbox", True))).lower() in ("1", "true", "yes")
+    wb["sandbox"] = sandbox
+    if sandbox:
+        k, s = os.environ.get("WEBULL_PAPER_APP_KEY"), os.environ.get("WEBULL_PAPER_APP_SECRET")
+        acct = os.environ.get("WEBULL_PAPER_ACCOUNT_ID") or wb.get("paper_account_id")
         log.warning("BRIDGE -> WEBULL PAPER account")
     else:
-        k, s, acct = os.environ.get("WEBULL_APP_KEY"), os.environ.get("WEBULL_APP_SECRET"), wb["account_id"]
+        k, s = os.environ.get("WEBULL_APP_KEY"), os.environ.get("WEBULL_APP_SECRET")
+        acct = os.environ.get("WEBULL_ACCOUNT_ID") or wb.get("account_id")
         log.warning("BRIDGE -> LIVE ACCOUNT - REAL ORDERS")
     if not k or not s: sys.exit("Webull key/secret environment variables are not set (see README).")
-    broker = WebullBroker(k, s, acct, cfg.symbol, sandbox=wb.get("sandbox", True), order_events=wb.get("order_events", False))
-    bridge = Bridge(broker, pw, cfg.tick, cfg.max_contracts_cap, cfg.trade_log, br.get("tz", "America/Chicago"), cfg.trade_end)
-    port = a.port or int(br.get("port", 80))
+    symbol = os.environ.get("PORR_SYMBOL", cfg.symbol)
+    max_qty = int(os.environ.get("PORR_MAX_CONTRACTS", cfg.max_contracts_cap))
+    data_dir = os.environ.get("DATA_DIR", ".")
+    os.makedirs(data_dir, exist_ok=True)
+    trade_log = os.path.join(data_dir, os.path.basename(cfg.trade_log))
+    email = dict(raw.get("email", {}))
+    if os.environ.get("EMAIL_TO"):                         # Render: email settings from environment
+        email.update(enabled=True, to=os.environ["EMAIL_TO"], **{"from": os.environ.get("EMAIL_FROM", os.environ["EMAIL_TO"])})
+    def notify(subject, body):
+        log.warning("%s: %s", subject, body)
+        if email.get("enabled"):
+            from report import send_email
+            try: send_email(email, subject, body)
+            except Exception: log.exception("notify email failed")
+    broker = WebullBroker(k, s, acct, symbol, sandbox=sandbox, order_events=wb.get("order_events", False))
+    bridge = Bridge(broker, pw, cfg.tick, max_qty, trade_log, br.get("tz", "America/Chicago"), cfg.trade_end,
+                    state_path=os.path.join(data_dir, "bridge_state.json"), notify=notify)
+    bridge.restore()
+    port = a.port or int(os.environ.get("PORT", br.get("port", 80)))
     srv = ThreadingHTTPServer((br.get("host", "0.0.0.0"), port), make_handler(bridge))
     threading.Thread(target=srv.serve_forever, daemon=True).start()
     log.info("listening on port %s", port)
@@ -249,8 +350,7 @@ def main() -> None:
             if bridge.eod_done_for == now.date() and bridge.pos is None and last_report != now.date() and \
                     now.time() >= (datetime.combine(now.date(), cfg.trade_end) + timedelta(minutes=5)).time():
                 from report import daily_report
-                daily_report(cfg.trade_log, raw.get("email", {}), now.date(),
-                             "Webull paper (bridge)" if wb.get("sandbox", True) else "LIVE (bridge)")
+                daily_report(trade_log, email, now.date(), "Webull paper (bridge)" if sandbox else "LIVE (bridge)")
                 last_report = now.date()
         except Exception:
             log.exception("loop error (continuing)")

@@ -1,0 +1,20 @@
+# Bridge config for Render (no secrets here). Everything account-specific comes from Render
+# environment variables: BRIDGE_PASSPHRASE, WEBULL_PAPER_APP_KEY / _SECRET, WEBULL_PAPER_ACCOUNT_ID,
+# WEBULL_SANDBOX, PORR_SYMBOL, PORR_MAX_CONTRACTS, DATA_DIR, EMAIL_TO, EMAIL_FROM, SMTP_PASSWORD.
+[strategy]
+symbol            = "MNQZ6"   # overridden by PORR_SYMBOL
+tick              = 0.25
+trade_end         = "11:00"   # flatten everything at 11:00 CT
+max_contracts_cap = 1         # overridden by PORR_MAX_CONTRACTS
+trade_log         = "trades.csv"
+
+[webull]
+sandbox      = true           # overridden by WEBULL_SANDBOX
+order_events = false
+
+[email]
+smtp_host = "smtp.gmail.com"
+smtp_port = 587
+
+[bridge]
+host = "0.0.0.0"              # port comes from Render's PORT variable

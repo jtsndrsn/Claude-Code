@@ -91,6 +91,16 @@ class PaperBroker:
         out, self._pending = self._pending, []
         return out
 
+    # restart-recovery helpers (the paper broker keeps everything in memory)
+    def adopt(self, order_id, tag, side, qty):
+        pass
+
+    def open_order_ids(self):
+        return list(self.orders)
+
+    def net_position(self):
+        return None
+
 
 # ---------------------------------------------------------------------------------------------
 class WebullBroker:
@@ -250,6 +260,35 @@ class WebullBroker:
         if fill and coid not in self._done:
             self._done.add(coid)
             self._fills.put(fill)
+
+    # ---- restart recovery -------------------------------------------------------------------
+    def adopt(self, order_id, tag, side, qty):
+        """Track an order placed before a restart (from the saved state)."""
+        self.tags[order_id], self.sides[order_id], self.qtys[order_id] = tag, side, qty
+        if order_id not in self.open_ids:
+            self.open_ids.append(order_id)
+
+    def open_order_ids(self) -> list[str]:
+        res = self.trade.order_v3.get_order_open(self.account_id, page_size=100)
+        if res.status_code != 200:
+            raise RuntimeError(f"open orders failed {res.status_code}: {res.text}")
+        data = res.json(); rows = data.get("data", data) if isinstance(data, dict) else data
+        out = []
+        for r in rows or []:
+            for o in (r.get("orders") or [r]):
+                if o.get("symbol", self.symbol) == self.symbol and o.get("client_order_id"):
+                    out.append(o["client_order_id"])
+            if r.get("client_order_id") and r.get("client_order_id") not in out:
+                out.append(r["client_order_id"])
+        return out
+
+    def net_position(self) -> float | None:
+        """Net contracts in self.symbol according to Webull (None if unknown)."""
+        res = self.trade.account_v2.get_account_position(self.account_id)
+        if res.status_code != 200:
+            return None
+        data = res.json(); rows = data.get("data", data) if isinstance(data, dict) else data
+        return sum(float(r.get("quantity", 0) or 0) for r in rows or [] if r.get("symbol") == self.symbol)
 
     def poll_fills(self) -> list[Fill]:
         try:

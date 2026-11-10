@@ -73,5 +73,36 @@ class BridgeTest(unittest.TestCase):
         b, _ = mk(); b.max_qty = 1
         place(b); self.assertEqual(b.working["Long"][1]["qty"], 1)
 
+    def test_save_restore_replaces_missing_stop(self):
+        d = tempfile.mkdtemp(); st = os.path.join(d, "state.json")
+        b, log = mk(state_path=st)
+        place(b); b.broker.on_price(b.clock, 1003, gap=False); px(b, 999.75)
+        self.assertTrue(os.path.exists(st))
+        notes = []
+        b2 = FakeClockBridge(PaperBroker(0.25), "pw", max_qty=10, trade_log=log, state_path=st,
+                             notify=lambda s, m: notes.append(s))
+        b2.restore()                                   # fresh broker has no orders -> stop re-placed
+        self.assertEqual((b2.pos.tag, b2.pos.entry, b2.pos.sl_price), ("Long", 1000, 995.0))
+        self.assertTrue(any("re-placed" in n for n in notes))
+        b2.broker.on_price(b2.clock, 1000, gap=False); px(b2, 994.75)
+        self.assertIsNone(b2.pos)
+        self.assertIn("SL", open(log).read())
+
+    def test_heartbeat_and_silence_warning(self):
+        notes = []
+        b, _ = mk(notify=lambda s, m: notes.append(s))
+        b.clock = T0.replace(hour=8, minute=21); b.tick_loop_once(); b.tick_loop_once()
+        self.assertEqual(notes, ["PORR bridge: up and waiting"])
+        b.clock = T0.replace(hour=8, minute=41); b.tick_loop_once()
+        self.assertIn("PORR bridge: NO ALERTS from TradingView", notes)
+        n = len(notes); b.tick_loop_once(); self.assertEqual(len(notes), n)
+
+    def test_no_silence_warning_when_alerts_arrive(self):
+        notes = []
+        b, _ = mk(notify=lambda s, m: notes.append(s))
+        b.clock = T0.replace(hour=8, minute=30); place(b)
+        b.clock = T0.replace(hour=8, minute=45); b.tick_loop_once()
+        self.assertNotIn("PORR bridge: NO ALERTS from TradingView", notes)
+
 if __name__ == "__main__":
     unittest.main()
