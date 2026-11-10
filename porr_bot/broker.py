@@ -14,6 +14,7 @@ Every broker exposes the same calls:
 from __future__ import annotations
 
 import itertools
+import json
 import logging
 import queue
 import threading
@@ -103,8 +104,9 @@ class WebullBroker:
     Confirmed from the SDK's own samples: "SELL" side and "stop_price" for STOP_LOSS orders
     (equity samples), get_order_detail for polling.
 
-    NOT verified (test in the sandbox before going live) - marked VERIFY below:
-      * the order-status event / order-detail field names used in _parse_event()
+    Order-status fields follow Webull's documented Order Detail and trade-event schemas
+    (status / order_status, scene_type, filled_quantity / filled_qty, filled_price); confirm
+    with wb_order_test.py in the sandbox before going live.
     """
 
     def __init__(self, app_key: str, app_secret: str, account_id: str, symbol: str,
@@ -193,18 +195,42 @@ class WebullBroker:
             log.exception("Could not parse order event: %s", raw_message)
 
     def _parse_event(self, payload) -> Fill | None:
-        # VERIFY: field names below are best guesses until checked against a sandbox event.
+        """Turn an order-status message into a Fill when the order is completely filled.
+
+        Handles both shapes documented by Webull:
+          * trade-events stream payload (JSON string): client_order_id, order_status, scene_type
+            (FINAL_FILLED = fully filled), filled_qty, filled_price, filled_time
+          * Order Detail response: {client_order_id, ..., orders: [{client_order_id, status
+            (PENDING|SUBMITTED|CANCELLED|FILLED|FAILED|PARTIAL_FILLED), filled_quantity,
+            filled_price (average), filled_time_at}]}
+        """
         log.debug("order event: %s", payload)
-        p = payload if isinstance(payload, dict) else getattr(payload, "__dict__", {})
+        p = payload
+        if isinstance(p, (str, bytes)):
+            try: p = json.loads(p)
+            except ValueError: return None
+        if not isinstance(p, dict):
+            p = getattr(p, "__dict__", {})
+        if isinstance(p.get("orders"), list) and p["orders"]:          # Order Detail shape
+            items = [o for o in p["orders"] if o.get("client_order_id") in (None, p.get("client_order_id"))]
+            item = dict(items[0] if items else p["orders"][0])
+            item.setdefault("client_order_id", p.get("client_order_id"))
+            p = item
         coid = p.get("client_order_id")
-        if coid in self._done:
+        if coid not in self.tags or coid in self._done:
             return None
         status = str(p.get("order_status") or p.get("status") or "").upper()
-        if coid not in self.tags or status != "FILLED":
+        scene = str(p.get("scene_type") or "").upper()
+        if not (status == "FILLED" or scene == "FINAL_FILLED"):
+            if status in ("FAILED",) or scene == "PLACE_FAILED":
+                log.error("Webull rejected order %s (%s): %s", coid, self.tags[coid], p)
             return None
-        price = float(p.get("filled_price") or p.get("avg_filled_price") or p.get("price"))
+        price = p.get("filled_price") or p.get("avg_filled_price")
+        if price in (None, "", "0", 0):
+            log.error("Fill without a price for %s: %s", coid, p)
+            return None
         qty = int(float(p.get("filled_quantity") or p.get("filled_qty") or self.qtys[coid]))
-        return Fill(coid, self.tags[coid], self.sides[coid], qty, price, datetime.now().astimezone())
+        return Fill(coid, self.tags[coid], self.sides[coid], qty, float(price), datetime.now().astimezone())
 
     def _poll_one(self) -> None:
         """Fallback if a push event is missed: check ONE working order per call (Order Detail is
@@ -217,7 +243,7 @@ class WebullBroker:
         if res.status_code != 200:
             return
         data = res.json()
-        if not self._seen_detail:                    # VERIFY: log the real shape once
+        if not self._seen_detail:                    # log the real shape once, for the record
             log.info("order detail sample: %s", data)
             self._seen_detail = True
         fill = self._parse_event(_find_order(data, coid) or {})
