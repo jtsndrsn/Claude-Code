@@ -15,7 +15,7 @@ import sys
 import time as _time
 import tomllib
 from dataclasses import fields
-from datetime import datetime, time, timedelta
+from datetime import date, datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from broker import PaperBroker
@@ -62,16 +62,33 @@ def live(cfg: Config, raw: dict, tz: str) -> None:
     from feeds import WebullFeed
 
     wb = raw.get("webull", {})
+    # Market data always comes from Webull PRODUCTION with the live key (needs the OpenAPI futures data
+    # subscription). Orders depend on the mode:
+    #   paper = true                    -> simulated fills inside the bot, no orders sent anywhere
+    #   paper = false, sandbox = true   -> orders go to the Webull PAPER account (paper-trade key)
+    #   paper = false, sandbox = false  -> REAL orders on the live account (live key)
     key, secret = os.environ.get("WEBULL_APP_KEY"), os.environ.get("WEBULL_APP_SECRET")
     if not key or not secret:
-        sys.exit("Set WEBULL_APP_KEY and WEBULL_APP_SECRET environment variables.")
+        sys.exit("Set WEBULL_APP_KEY and WEBULL_APP_SECRET (live key, used for market data).")
     sandbox = wb.get("sandbox", True)
     paper = wb.get("paper", True)
-    log.warning("LIVE MODE  sandbox=%s  paper_fills=%s  symbol=%s", sandbox, paper, cfg.symbol)
+    mode = "SIMULATED fills" if paper else ("WEBULL PAPER account" if sandbox else "LIVE ACCOUNT - REAL ORDERS")
+    log.warning("LIVE MODE: %s  symbol=%s", mode, cfg.symbol)
 
-    real = WebullBroker(key, secret, wb["account_id"], cfg.symbol, sandbox=sandbox)
-    broker = PaperBroker(cfg.tick) if paper else real
-    feed = WebullFeed(real.api_client, cfg.symbol, tz)
+    from webull.core.client import ApiClient
+    data_api = ApiClient(key, secret, "us"); data_api.add_endpoint("us", "api.webull.com")
+    feed = WebullFeed(data_api, cfg.symbol, tz)
+    if paper:
+        broker = PaperBroker(cfg.tick)
+    elif sandbox:
+        pk, ps = os.environ.get("WEBULL_PAPER_APP_KEY"), os.environ.get("WEBULL_PAPER_APP_SECRET")
+        if not pk or not ps:
+            sys.exit("Set WEBULL_PAPER_APP_KEY and WEBULL_PAPER_APP_SECRET (paper-trade key) for the Webull paper account.")
+        broker = WebullBroker(pk, ps, wb["paper_account_id"], cfg.symbol, sandbox=True,
+                              order_events=wb.get("order_events", False))
+    else:
+        broker = WebullBroker(key, secret, wb["account_id"], cfg.symbol, sandbox=False,
+                              order_events=wb.get("order_events", False))
     eng = Engine(cfg, broker)
     poll = float(wb.get("poll_seconds", 2.0))
     stop_file = os.path.join(HERE, "STOP")
@@ -85,7 +102,32 @@ def live(cfg: Config, raw: dict, tz: str) -> None:
     log.info("Warm-up: %d bars, range_done=%s high=%s low=%s", len(warm), eng.range_done,
              eng.range_high, eng.range_low)
 
+    ctx_day = None
     while True:
+        today = datetime.now(ZoneInfo(tz)).date()
+        if ctx_day != today and datetime.now(ZoneInfo(tz)).time() >= time(6, 30):
+            # once a day before the range ends: VIX regime (breakout day?) and daily EMA trend
+            try:
+                from feeds import vix_change_before, daily_trend
+                chg = vix_change_before(today)
+                trend = daily_trend(feed.md, cfg.symbol, today, cfg.trend_len)
+                eng.set_day_context(breakout=chg is not None and chg < -cfg.vix_drop, trend=trend)
+                log.info("Day context %s: VIX change %s -> %s day, daily trend %+d", today, chg,
+                         "BREAKOUT" if eng.breakout_day else "fade", trend)
+                ctx_day = today
+            except Exception:
+                log.exception("could not load day context (VIX / trend); retrying")
+        # One session per run: once the trade window is over and we're flat, stop (a scheduler
+        # starts the bot again the next morning).
+        now_ct = datetime.now(ZoneInfo(tz))
+        if wb.get("exit_after_session", True) and eng.eod_done and eng.pos is None and \
+                now_ct.time() >= (datetime.combine(now_ct.date(), cfg.trade_end) + timedelta(minutes=5)).time():
+            log.warning("Trade window over and flat: exiting for today")
+            from report import daily_report
+            daily_report(cfg.trade_log, raw.get("email", {}), now_ct.date(),
+                         "simulated" if paper else ("Webull paper" if sandbox else "LIVE"),
+                         regime="BREAKOUT (VIX drop)" if eng.breakout_day else "fade")
+            break
         if os.path.exists(stop_file):
             log.warning("STOP file found: cancelling and flattening")
             eng._cancel_entries()
@@ -112,11 +154,12 @@ def live(cfg: Config, raw: dict, tz: str) -> None:
 
 
 def main() -> None:
-    ap = argparse.ArgumentParser(description="PORR v1.1 bot")
-    ap.add_argument("mode", choices=["replay", "live"])
+    ap = argparse.ArgumentParser(description="PORR v2.0 bot")
+    ap.add_argument("mode", choices=["replay", "live", "report"])
     ap.add_argument("--config", default=None)
     ap.add_argument("--csv", help="TradingView 1-minute export for replay")
     ap.add_argument("--tz", default="America/Chicago")
+    ap.add_argument("--date", help="report: day to report (default today)")
     ap.add_argument("-v", "--verbose", action="store_true")
     a = ap.parse_args()
     logging.basicConfig(level=logging.DEBUG if a.verbose else logging.INFO,
@@ -127,6 +170,10 @@ def main() -> None:
             sys.exit("--csv is required for replay")
         replay(cfg, a.csv, a.tz)
         print(f"Done. Trades written to {cfg.trade_log}")
+    elif a.mode == "report":
+        from report import daily_report
+        day = date.fromisoformat(a.date) if a.date else datetime.now(ZoneInfo(a.tz)).date()
+        print(daily_report(cfg.trade_log, raw.get("email", {}), day, "report"))
     else:
         live(cfg, raw, a.tz)
 

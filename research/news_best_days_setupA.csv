@@ -1,0 +1,95 @@
+date,time_ct,event,actual,forecast,surprise
+2026-06-02,09:00,JOLTS Job Openings,7.618,6.88,0.738
+2025-06-04,09:00,ISM N-Mfg PMI,49.9,52,-2.1
+2026-10-30,,NONE,,,
+2026-10-08,07:30,Initial Jobless Claims,197,200,-3
+2026-08-25,09:00,New Home Sales-Units,0.607,0.62,-0.013
+2026-08-25,09:00,Consumer Confidence,89.4,90.2,-0.8
+2026-02-11,07:30,Non-Farm Payrolls,130,70,60
+2026-02-11,07:30,Unemployment Rate,4.3,4.4,-0.1
+2025-12-01,09:00,ISM Manufacturing PMI,48.2,49,-0.8
+2025-12-01,19:00,Fed Chair Powell remarks (Hoover Institution Shultz lecture panel),,,
+2026-07-14,07:30,CPI MM SA,-0.4,-0.1,-0.3
+2026-07-14,07:30,CPI YY NSA,3.5,3.8,-0.3
+2026-07-14,07:30,Core CPI YY NSA,2.6,2.8,-0.2
+2026-07-14,07:30,Core CPI MM SA,0,0.2,-0.2
+2026-07-14,09:00,Fed Chair Warsh testifies - House Financial Services semi-annual Monetary Policy Report,,,
+2025-02-27,07:30,Initial Jobless Claims,242,221,21
+2025-02-27,07:30,GDP 2nd Estimate (Q4),2.3,2.3,0
+2025-02-27,07:30,Core PCE Prices Prelim (Q4),2.7,2.5,0.2
+2025-02-27,07:30,Durable Goods,3.1,2,1.1
+2025-02-27,09:00,Pending Home Sales MM,-4.6,-1.3,-3.3
+2025-07-17,07:30,Initial Jobless Claims,221,235,-14
+2025-07-17,07:30,Retail Sales MM,0.6,0.1,0.5
+2025-07-17,07:30,Retail Control,0.5,0.3,0.2
+2026-07-09,07:30,Initial Jobless Claims,215,218,-3
+2026-07-09,09:00,Existing Home Sales,4.09,4.2,-0.11
+2026-05-22,09:00,U Mich Sentiment Final,44.8,48.2,-3.4
+2026-05-11,09:00,Existing Home Sales,4.02,4.05,-0.03
+2026-04-07,07:30,Durable Goods,-1.4,-1,-0.4
+2025-12-02,,NONE,,,
+2025-11-21,08:45,S&P Global Mfg PMI Flash,51.9,52,-0.1
+2025-11-21,08:45,S&P Global Svcs PMI Flash,55,54.6,0.4
+2025-11-21,08:45,S&P Global Comp PMI Flash,54.8,54.5,0.3
+2025-11-21,09:00,U Mich Sentiment Final,51,50.5,0.5
+2025-08-12,07:30,CPI MM SA,0.2,0.2,0
+2025-08-12,07:30,CPI YY NSA,2.7,2.8,-0.1
+2025-08-12,07:30,Core CPI MM SA,0.3,0.3,0
+2025-08-12,07:30,Core CPI YY NSA,3.1,3,0.1
+2025-06-13,09:00,U Mich Sentiment Prelim,60.5,53.5,7
+2025-04-03,07:30,Initial Jobless Claims,219,225,-6
+2025-04-03,09:00,ISM N-Mfg PMI,50.8,53,-2.2
+2026-09-28,,NONE,,,
+2026-04-21,07:30,Retail Sales MM,1.7,1.4,0.3
+2026-04-21,07:30,Retail Control,0.7,0.2,0.5
+2026-04-21,09:00,Pending Home Sales MM,1.5,0.5,1
+2026-04-21,09:00,Senate Banking Committee hearing on Kevin Warsh nomination as Fed Chair,,,
+2026-02-27,07:30,PPI Final Demand MM,0.5,0.3,0.2
+2026-02-27,07:30,PPI Final Demand YY,2.9,2.6,0.3
+2026-02-27,07:30,Core PPI (ex Food/Energy) MM,0.8,0.3,0.5
+2026-02-27,07:30,Core PPI (ex Food/Energy) YY,3.6,3,0.6
+2026-02-20,07:30,GDP Advance (Q4),1.4,3,-1.6
+2026-02-20,07:30,Core PCE Prices Advance (Q4),2.7,2.6,0.1
+2026-02-20,07:30,PCE Price Index MM (Dec),0.4,0.3,0.1
+2026-02-20,07:30,PCE Price Index YY (Dec),2.9,2.8,0.1
+2026-02-20,07:30,Core PCE Price Index MM (Dec),0.4,0.3,0.1
+2026-02-20,07:30,Core PCE Price Index YY (Dec),3,2.9,0.1
+2026-02-20,08:00,New Home Sales-Units (Nov),0.764,,
+2026-02-20,08:45,S&P Global Mfg PMI Flash,51.2,52.6,-1.4
+2026-02-20,08:45,S&P Global Svcs PMI Flash,52.3,53,-0.7
+2026-02-20,08:45,S&P Global Comp PMI Flash,52.3,,
+2026-02-20,09:00,New Home Sales-Units (Dec),0.745,0.73,0.015
+2026-02-20,09:00,U Mich Sentiment Final,56.6,57.3,-0.7
+2026-01-02,,NONE,,,
+2025-12-16,06:30,Non-Farm Payrolls (Oct),-173,-15,-158
+2025-12-16,07:30,Non-Farm Payrolls (Nov),64,50,14
+2025-12-16,07:30,Unemployment Rate (Nov),4.6,4.4,0.2
+2025-12-16,07:30,Retail Sales MM (Oct),0,0.1,-0.1
+2025-12-16,07:30,Retail Control (Oct),0.8,0.4,0.4
+2025-12-16,08:45,S&P Global Mfg PMI Flash,51.8,52,-0.2
+2025-12-16,08:45,S&P Global Svcs PMI Flash,52.9,54,-1.1
+2025-12-16,08:45,S&P Global Comp PMI Flash,53,,
+2025-10-17,,NONE,,,
+2025-08-21,07:30,Initial Jobless Claims,235,225,10
+2025-08-21,08:45,S&P Global Mfg PMI Flash,53.3,49.5,3.8
+2025-08-21,08:45,S&P Global Svcs PMI Flash,55.4,54.2,1.2
+2025-08-21,08:45,S&P Global Comp PMI Flash,55.4,,
+2025-08-21,09:00,Existing Home Sales,4.01,3.92,0.09
+2025-07-16,07:30,PPI Final Demand MM,0,0.2,-0.2
+2025-07-16,07:30,PPI Final Demand YY,2.3,2.5,-0.2
+2025-07-16,07:30,Core PPI (ex Food/Energy) MM,0,0.2,-0.2
+2025-07-16,07:30,Core PPI (ex Food/Energy) YY,2.6,2.7,-0.1
+2025-07-15,07:30,CPI MM SA,0.3,0.3,0
+2025-07-15,07:30,CPI YY NSA,2.7,2.6,0.1
+2025-07-15,07:30,Core CPI MM SA,0.2,0.3,-0.1
+2025-07-15,07:30,Core CPI YY NSA,2.9,3,-0.1
+2025-03-04,,NONE,,,
+2026-09-23,08:45,S&P Global Mfg PMI Flash,57,53.6,3.4
+2026-09-23,08:45,S&P Global Svcs PMI Flash,58.7,56,2.7
+2026-09-23,08:45,S&P Global Comp PMI Flash,58.4,,
+2026-07-29,13:00,FOMC Rate Decision (Fed Funds Target),3.625,,
+2026-07-29,13:30,Fed Chair Warsh press conference,,,
+2025-12-22,,NONE,,,
+2025-09-24,09:00,New Home Sales-Units,0.8,0.65,0.15
+2025-09-17,13:00,FOMC Rate Decision (Fed Funds Target; prior 4.375),4.125,,
+2025-09-17,13:30,Fed Chair Powell press conference (feed time TBD; standard 13:30 CT),,,

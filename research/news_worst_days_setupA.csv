@@ -1,0 +1,62 @@
+date,time_ct,event,actual,forecast,surprise
+2025-02-26,09:00,New Home Sales-Units,0.657,0.68,-0.023
+2025-03-06,07:30,Initial Jobless Claims,221,235,-14
+2025-05-08,07:30,Initial Jobless Claims,228,230,-2
+2025-05-14,,NONE,,,
+2025-06-09,,NONE,,,
+2025-06-20,,NONE,,,
+2025-06-23,08:45,S&P Global Mfg PMI Flash,52,51,1
+2025-06-23,08:45,S&P Global Svcs PMI Flash,53.1,53,0.1
+2025-06-23,08:45,S&P Global Comp PMI Flash,52.8,,
+2025-06-23,09:00,Existing Home Sales,4.03,3.95,0.08
+2025-07-14,,NONE,,,
+2025-08-22,09:00,Fed Chair Powell speaks (Jackson Hole: Economic Outlook and Framework Review),,,
+2025-09-02,09:00,ISM Manufacturing PMI,48.7,49,-0.3
+2025-09-18,07:30,Initial Jobless Claims,231,240,-9
+2025-10-10,09:00,U Mich Sentiment Prelim,55.0,54.2,0.8
+2025-10-14,11:20,Fed Chair Powell speaks (economic outlook and monetary policy; NABE),,,
+2025-11-10,,NONE,,,
+2025-11-14,,NONE,,,
+2025-11-17,,NONE,,,
+2025-11-18,06:00,"Initial Jobless Claims (delayed, w/o Sep 22)",224,223,1
+2025-11-18,06:30,"Initial Jobless Claims (delayed, w/o Sep 29)",235,230,5
+2025-11-18,07:00,"Initial Jobless Claims (delayed, w/o Oct 6)",220,230,-10
+2025-11-18,07:30,"Initial Jobless Claims (delayed, w/o Oct 13)",232,225,7
+2025-11-18,09:00,"Durable Goods R MM (Aug, revised)",2.9,,
+2025-11-26,07:30,Initial Jobless Claims,216,225,-9
+2025-11-26,07:30,Durable Goods (Sep),0.5,0.3,0.2
+2026-01-09,07:30,Non-Farm Payrolls,50,60,-10
+2026-01-09,07:30,Unemployment Rate,4.4,4.5,-0.1
+2026-01-09,09:00,U Mich Sentiment Prelim,54.0,53.5,0.5
+2026-01-19,,NONE,,,
+2026-02-05,07:30,Initial Jobless Claims,231,212,19
+2026-02-05,09:00,JOLTS Job Openings,6.542,7.2,-0.658
+2026-02-06,09:00,U Mich Sentiment Prelim,57.3,55,2.3
+2026-02-18,07:30,Durable Goods (Dec),-1.4,-2,0.6
+2026-02-18,13:00,FOMC Minutes (Jan 27-28 meeting),,,
+2026-02-23,09:00,"Durable Goods R MM (Dec, revised)",-1.4,,
+2026-03-03,,NONE,,,
+2026-03-05,07:30,Initial Jobless Claims,213,215,-2
+2026-04-29,07:30,Durable Goods (Mar),0.8,0.5,0.3
+2026-04-29,13:00,"FOMC Rate Decision (Fed Funds Tgt, unchanged) + Statement",3.625,,
+2026-04-29,13:30,Fed Chair press conference,,,
+2026-06-10,07:30,CPI MM SA,0.5,0.5,0
+2026-06-10,07:30,CPI YY NSA,4.2,4.2,0
+2026-06-10,07:30,Core CPI MM SA,0.2,0.3,-0.1
+2026-06-10,07:30,Core CPI YY NSA,2.9,2.9,0
+2026-06-11,07:30,Initial Jobless Claims,229,219,10
+2026-06-11,07:30,PPI ex Food/Energy/Trade MM,0.8,,
+2026-06-11,07:30,PPI ex Food/Energy/Trade YY,5.1,,
+2026-06-11,07:30,PPI Final Demand MM,1.1,0.7,0.4
+2026-06-11,07:30,PPI Final Demand YY,6.5,6.4,0.1
+2026-06-11,07:30,Core PPI ex Food/Energy MM,0.4,0.5,-0.1
+2026-06-11,07:30,Core PPI ex Food/Energy YY,4.9,5.4,-0.5
+2026-07-06,09:00,ISM Services (Non-Mfg) PMI,54.0,54,0
+2026-07-16,07:30,Initial Jobless Claims,208,217,-9
+2026-07-16,07:30,Retail Sales MM,0.2,0.2,0
+2026-07-16,07:30,Retail Sales Ex-Autos MM,-0.2,-0.1,-0.1
+2026-07-16,07:30,Retail Control,0.5,0.5,0
+2026-07-16,09:00,Pending Home Sales MM,-5.4,-0.5,-4.9
+2026-08-03,09:00,ISM Manufacturing PMI,55.6,54,1.6
+2026-10-13,09:00,Existing Home Sales,3.99,3.95,0.04
+2026-10-20,09:00,Pending Home Sales MM,-7.3,-0.5,-6.8

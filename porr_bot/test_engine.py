@@ -3,7 +3,7 @@ import csv
 import os
 import tempfile
 import unittest
-from datetime import datetime, timedelta
+from datetime import datetime, time, timedelta
 from zoneinfo import ZoneInfo
 
 from broker import PaperBroker
@@ -63,7 +63,8 @@ class EngineTest(unittest.TestCase):
 
     def cfg(self, **kw):
         base = dict(tp_ticks=20, sl_ticks=20, use_be=False, contracts=1, max_contracts_cap=1, entry_delay=0,
-                    trend_minutes=15, trade_log=self.log)
+                    trend_minutes=15, use_trend_tp=False, range_start=time(7, 30), trade_end=time(15, 0),
+                    skip_broken=True, trade_log=self.log)
         base.update(kw)
         return Config(**base)
 
@@ -151,6 +152,69 @@ class EngineTest(unittest.TestCase):
         self.assertTrue(eng.trend_close is not None)
         t = self.trades()
         self.assertEqual((t[0]["exit_type"], float(t[0]["exit"])), ("TP", 1010.0))
+
+    def test_line_tp_targets_opposite_line(self):
+        path = [(1003, 1003, 999.5, 1001), (1001, 1010.5, 1001, 1010.5)]
+        self.run_bars(self.cfg(tp_ticks=4, sl_ticks=40, use_line_tp=True), range_bars() + trade_bars(path))
+        t = self.trades()
+        self.assertEqual((t[0]["exit_type"], float(t[0]["exit"])), ("TP", 1010.0))
+
+    def test_no_short_on_pullback_after_break_up(self):
+        # Long fills, rallies through the HIGH while we're in the long (short can't be armed),
+        # long hits TP above the high, then price falls back to the high from above: no short.
+        path = [
+            (1003, 1003, 999.5, 1001),     # long @1000
+            (1001, 1012, 1001, 1012),      # through the high (1010) while long
+            (1012, 1015.5, 1012, 1015),    # long TP @1015 (60 ticks)
+            (1015, 1015, 1008, 1008),      # back down below the high
+            (1008, 1011, 1008, 1009),      # touches 1010.25+ from below: would short without the rule
+        ]
+        eng = self.run_bars(self.cfg(tp_ticks=60, sl_ticks=40), range_bars() + trade_bars(path))
+        self.assertEqual([x["tag"] for x in self.trades()], ["Long"])
+        self.assertIsNone(eng.pos)
+
+    def test_pullback_short_allowed_when_rule_off(self):
+        path = [
+            (1003, 1003, 999.5, 1001), (1001, 1012, 1001, 1012), (1012, 1015.5, 1012, 1015),
+            (1015, 1015, 1008, 1008), (1008, 1011, 1008, 1009),
+        ]
+        eng = self.run_bars(self.cfg(tp_ticks=60, sl_ticks=40, skip_broken=False), range_bars() + trade_bars(path))
+        self.assertEqual([x["tag"] for x in self.trades()], ["Long"])
+        self.assertEqual(eng.pos.tag, "Short")      # the pullback short was taken
+
+    def test_no_reshort_after_own_stop_out_above_high(self):
+        # Short fills at the high, is stopped out above it, price comes back down through the high
+        # and then ticks back up to it: with one_per_level off the old rule would short again.
+        path = [
+            (1008, 1010.5, 1008, 1010),    # short @1010
+            (1010, 1016, 1010, 1016),      # stopped (SL 20 ticks -> 1015)
+            (1016, 1016, 1007, 1007),      # back down below the high
+            (1007, 1011, 1007, 1009),      # retouch from below: must NOT short
+        ]
+        eng = self.run_bars(self.cfg(one_per_level=False), range_bars() + trade_bars(path))
+        self.assertEqual([(x["tag"], x["exit_type"]) for x in self.trades()], [("Short", "SL")])
+        self.assertIsNone(eng.pos)
+
+    def test_breakout_day_long_on_break_of_high(self):
+        cfg = self.cfg(bo_tp=20, bo_sl=20, bo_use_be=False)
+        broker = PaperBroker(cfg.tick); eng = Engine(cfg, broker)
+        eng.set_day_context(breakout=True)
+        path = [(1008, 1009, 1007, 1009), (1009, 1016, 1009, 1016)]     # breaks 1010 -> long, TP 1015
+        for bar in range_bars() + trade_bars(path):
+            for i, px in enumerate(bar_ticks(bar)):
+                broker.on_price(bar.start, px, gap=(i == 0))
+                for f in broker.poll_fills(): eng.on_fill(f)
+                eng.on_price(bar.start, px)
+                for f in broker.poll_fills(): eng.on_fill(f)
+            eng.on_bar(bar)
+        t = self.trades()
+        self.assertEqual([(x["tag"], x["exit_type"], float(x["entry"]), float(x["exit"])) for x in t],
+                         [("BO Long", "TP", 1010.0, 1015.0)])
+
+    def test_no_breakout_when_switch_off(self):
+        cfg = self.cfg(use_vix_switch=False)
+        eng = Engine(cfg, PaperBroker(cfg.tick)); eng.set_day_context(breakout=True)
+        self.assertFalse(eng.breakout_day)
 
     def test_contract_cap(self):
         eng = Engine(Config(contracts=10, max_contracts_cap=2, trade_log=""), PaperBroker())

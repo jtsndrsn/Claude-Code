@@ -1,5 +1,17 @@
 //@version=6
-// Pre-Open Range Reversal  -  Version 1.1
+// Pre-Open Range Reversal  -  Version 2.2
+// v2.2: optional webhook alerts that mirror every order intent to the TradingView -> Webull bridge.
+// v2.1: breakout stop loss default 300 ticks (was 200): better in both 2025 and 2026.
+// v2.0: optimised defaults (07:00-08:30 range, 08:30-11:00 window, SL 100 / TP 500, BE 100->50,
+//       entry delay 10, with-trend TP 750 on daily EMA50) and a VIX regime switch: after VIX
+//       closes >0.9 pts lower, trade range BREAKOUTS (stop @ line, SL 200 / TP 800, BE 200->100).
+// v1.4: optional net P&L on the exit marks (TP / SL / EOD).
+// v1.3.2: a line is skipped after ANY break while not in a trade from it (incl. after our own
+//         stop-out); exits always use prices so the trend TP is no longer cut to the normal TP.
+// v1.3.1: end-of-day close happens at the last bar's close (also on early-close days), and any
+//         position found outside the trade window is closed immediately.
+// v1.3: skip a line once price breaks through it (no fades of a pullback from outside the range).
+// v1.2: range-size label, dashed mid-range line, optional TP at the opposite range line.
 // v1.1 defaults: TP 400 / SL 400, no breakeven, entry delay 24, 1 contract, max 4 trades,
 //   trend TP 600 on 1h EMA50 (off), flip 100/100 (off).
 // Marks the high/low of the hour before the cash open (default 07:30-08:30 Central,
@@ -13,32 +25,35 @@
 strategy("Pre-Open Range Reversal", shorttitle = "PORR", overlay = true,
      initial_capital = 50000, default_qty_type = strategy.fixed, default_qty_value = 1,
      margin_long = 0, margin_short = 0,
-     commission_type = strategy.commission.cash_per_contract, commission_value = 0.7,
+     commission_type = strategy.commission.cash_per_contract, commission_value = 0.74,   // Webull: clearing .12 + exchange .35 + NFA .02 + execution .25
      // Limits must trade 1 tick THROUGH the level to fill (a bare touch is not a guaranteed fill).
      backtest_fill_limits_assumption = 1,
      // Use lower-timeframe data to resolve fills inside each chart bar (needs Premium+ plan).
      use_bar_magnifier = true,
      // Stats loop looks back over each trade's bars.
-     max_bars_back = 2000)
+     max_bars_back = 2000,
+     max_lines_count = 500, max_labels_count = 500)
 
 // ---------- Inputs ----------
 grpS = "Sessions"
 tz        = input.string("America/Chicago", "Time zone", group = grpS, tooltip = "Oklahoma = America/Chicago (Central)")
-rangeSess = input.session("0730-0830", "Range window (mark high/low)", group = grpS)
-tradeSess = input.session("0830-1500", "Trade window (look for touches)", group = grpS)
+rangeSess = input.session("0700-0830", "Range window (mark high/low)", group = grpS)
+tradeSess = input.session("0830-1100", "Trade window (look for touches)", group = grpS)
 flatAtEnd = input.bool(true, "Flatten open trade at end of trade window", group = grpS)
 
 grpR = "Risk (ticks)"
-tpTicks   = input.int(400, "Take profit (ticks)", minval = 1, group = grpR)
-slTicks   = input.int(400, "Stop loss (ticks)", minval = 1, group = grpR)
-useBE     = input.bool(false, "Use breakeven stop", group = grpR)
+tpTicks   = input.int(500, "Take profit (ticks)", minval = 1, group = grpR)
+slTicks   = input.int(100, "Stop loss (ticks)", minval = 1, group = grpR)
+useBE     = input.bool(true, "Use breakeven stop", group = grpR)
 beTrigger = input.int(100, "Breakeven trigger (ticks in profit)", minval = 1, group = grpR)
-beOffset  = input.int(3, "Breakeven offset (ticks beyond entry)", group = grpR, tooltip = "0 = stop exactly at entry. 3 = lock in 3 ticks.")
+beOffset  = input.int(50, "Breakeven offset (ticks beyond entry)", group = grpR, tooltip = "0 = stop exactly at entry. 50 = lock in 50 ticks.")
+
+useLineTP = input.bool(false, "TP at the opposite range line", group = grpR, tooltip = "Overrides the take profit ticks (and the trend TP): longs from the range LOW take profit at the range HIGH, shorts from the range HIGH take profit at the range LOW, expecting the far line to act as resistance/support. Flip trades keep their own flip TP.")
 
 grpF = "Trend filter (take profit)"
-useTrendTP   = input.bool(false, "Use bigger TP on with-trend trades", group = grpF, tooltip = "Longs in an uptrend and shorts in a downtrend use the with-trend TP. Counter-trend trades keep the normal TP.")
-tpTrendTicks = input.int(600, "With-trend take profit (ticks)", minval = 1, group = grpF)
-trendTf      = input.timeframe("60", "Trend timeframe", group = grpF, tooltip = "Fixed timeframe so the trend reads the same on every chart timeframe. Keep it at or above the chart timeframe.")
+useTrendTP   = input.bool(true, "Use bigger TP on with-trend trades", group = grpF, tooltip = "Longs in an uptrend and shorts in a downtrend use the with-trend TP. Counter-trend trades keep the normal TP.")
+tpTrendTicks = input.int(750, "With-trend take profit (ticks)", minval = 1, group = grpF)
+trendTf      = input.timeframe("1D", "Trend timeframe", group = grpF, tooltip = "Fixed timeframe so the trend reads the same on every chart timeframe. Keep it at or above the chart timeframe.")
 trendLen     = input.int(50, "Trend EMA length", minval = 1, group = grpF, tooltip = "Uptrend = last closed trend-timeframe bar closed above its EMA. Downtrend = closed below.")
 showTrend    = input.bool(false, "Show trend EMA", group = grpF)
 
@@ -47,28 +62,61 @@ useFlip  = input.bool(false, "Flip after a full stop-out", group = grpX, tooltip
 flipTp   = input.int(100, "Flip take profit (ticks)", minval = 1, group = grpX)
 flipSl   = input.int(100, "Flip stop loss (ticks)", minval = 1, group = grpX)
 
+grpB = "VIX regime: breakout days"
+useVixSwitch = input.bool(true, "Breakout mode after a VIX drop", group = grpB, tooltip = "If VIX closed more than the threshold LOWER yesterday than the day before, today trades BREAKOUTS of the range (buy stop at the high, sell stop at the low) instead of fading the lines. Backtests: every such day broke at least one line and fading them lost money.")
+vixSym       = input.symbol("CBOE:VIX", "VIX symbol", group = grpB)
+vixDrop      = input.float(0.9, "VIX drop threshold (points)", minval = 0, step = 0.1, group = grpB)
+boTp         = input.int(800, "Breakout take profit (ticks)", minval = 1, group = grpB)
+boSl         = input.int(300, "Breakout stop loss (ticks)", minval = 1, group = grpB)
+boUseBE      = input.bool(true, "Breakout breakeven stop", group = grpB)
+boBeTrig     = input.int(200, "Breakout BE trigger (ticks)", minval = 1, group = grpB)
+boBeOff      = input.int(100, "Breakout BE offset (ticks)", group = grpB)
+boMaxTrades  = input.int(2, "Breakout max trades per day", minval = 1, maxval = 2, group = grpB, tooltip = "One per side: after the first breakout trade ends, the other side can still trigger.")
+
+grpW = "Webhook bridge (TradingView -> Webull)"
+useBridge  = input.bool(false, "Send order alerts to the Webull bridge", group = grpW, tooltip = "Sends a JSON alert whenever the strategy places, moves or cancels an entry order, moves a stop to breakeven, or flattens at the end of the window. Create ONE alert on this strategy with condition 'alert() function calls only' and the bridge server's webhook URL.")
+bridgePass = input.string("change-me", "Bridge passphrase", group = grpW, tooltip = "Must match BRIDGE_PASSPHRASE on the bridge server. Alerts with a wrong passphrase are ignored.")
+
 grpT = "Trade rules"
-contracts   = input.int(1, "Contracts per trade", minval = 1, group = grpT)
-maxTrades   = input.int(5, "Max trades per day", minval = 1, group = grpT)
+contracts   = input.int(10, "Contracts per trade", minval = 1, group = grpT)
+maxTrades   = input.int(4, "Max trades per day", minval = 1, group = grpT)
 onePerLevel = input.bool(true, "Only one trade per level per day", group = grpT)
+skipBroken  = input.bool(false, "Skip a line once price breaks through it", group = grpT, tooltip = "Only fade a line when price comes INTO it from inside the range. Once price trades through a line's entry level while we are not in a trade from that line (we were in the other trade, the side was used, or our trade there was stopped out), that line is skipped for the rest of the day, so a pullback to it from the outside is never traded.")
 allowLong   = input.bool(true, "Take longs (range low touch)", group = grpT)
 allowShort  = input.bool(true, "Take shorts (range high touch)", group = grpT)
-entryDelay  = input.int(24, "Entry delay (ticks beyond line)", minval = 0, group = grpT, tooltip = "Rests each limit this many ticks BEYOND the line: long below the range low, short above the range high. Read the dip stats with this at 0 first: above 0, trades that never dipped that far are not taken, so the stats only describe the deeper dips.")
+entryDelay  = input.int(10, "Entry delay (ticks beyond line)", minval = 0, group = grpT, tooltip = "Rests each limit this many ticks BEYOND the line: long below the range low, short above the range high. Read the dip stats with this at 0 first: above 0, trades that never dipped that far are not taken, so the stats only describe the deeper dips.")
 
 grpV = "Visuals"
 showLevels = input.bool(true, "Show range lines", group = grpV)
 showRangeBg = input.bool(true, "Shade range window", group = grpV)
+showMid     = input.bool(true, "Show mid-range line (dashed)", group = grpV)
+showRngLbl  = input.bool(true, "Show range size label", group = grpV)
 showStats   = input.bool(true, "Show stats table", group = grpV)
+showPnlMark = input.bool(true, "Show P&L on exit marks", group = grpV, tooltip = "Adds the trade's net P&L (after commission) to the TP / SL / EOD text on the chart's exit marks, e.g. \"TP +$198.60\". Uses the $0.74-per-contract-per-side commission set in this script; slippage is not included.")
 statsPosStr = input.string("Top right", "Stats table position", options = ["Top right", "Top left", "Bottom right", "Bottom left"], group = grpV)
 
 // ---------- Session state ----------
 tick    = syminfo.mintick
+COMM_PER_SIDE = 0.74  // keep in step with commission_value in strategy() above
+
+// Exit-mark text: "TP" / "SL" / "EOD", plus the trade's net P&L when showPnlMark is on.
+// The stats below only look at how the text STARTS, so the P&L suffix doesn't affect them.
+f_exitTxt(string tag, float exitPx, float entry, int dir, float qty) =>
+    if not showPnlMark or na(exitPx) or na(entry)
+        tag
+    else
+        net = (exitPx - entry) * dir * syminfo.pointvalue * qty - 2 * COMM_PER_SIDE * qty
+        tag + " " + (net >= 0 ? "+" : "-") + "$" + str.tostring(math.abs(net), "#,##0.00")
 inRange = not na(time(timeframe.period, rangeSess, tz))
 inTrade = not na(time(timeframe.period, tradeSess, tz))
 // Orders placed at a bar's close work on the NEXT bar, so gate them on the next bar's session.
 // This lets the limits rest from the 08:30 open instead of one bar late.
 nextInRange = not na(time(timeframe.period, rangeSess, tz, -1))
 nextInTrade = not na(time(timeframe.period, tradeSess, tz, -1))
+// Last bar we may hold orders on. Besides the normal end of the trade window, this also catches
+// the exchange's last bar of the day (early-close holidays like 12:00 CT), where the next bar is
+// still "inside" the window on paper but really comes after the overnight break.
+lastTradeBar = inTrade and (not nextInTrade or session.islastbar)
 
 // ---------- Trend ----------
 // Uses the last CLOSED trend-timeframe bar ([1] + lookahead_on), so it never repaints.
@@ -77,6 +125,15 @@ trendUp  = htfClose > htfEma
 trendDn  = htfClose < htfEma
 tpLongT  = useTrendTP and trendUp ? tpTrendTicks : tpTicks
 tpShortT = useTrendTP and trendDn ? tpTrendTicks : tpTicks
+
+// ---------- VIX regime ----------
+// Yesterday's VIX change = close(yesterday) - close(day before). Uses only completed VIX daily bars:
+// if today's VIX bar has already started, step back one bar.
+[vT, vC0, vC1, vC2] = request.security(vixSym, "D", [time, close, close[1], close[2]], lookahead = barmerge.lookahead_on)
+todayKey = year(time, tz) * 10000 + month(time, tz) * 100 + dayofmonth(time, tz)
+vixKey   = year(vT, "America/New_York") * 10000 + month(vT, "America/New_York") * 100 + dayofmonth(vT, "America/New_York")
+vixChg   = vixKey >= todayKey ? vC1 - vC2 : vC0 - vC1
+var bool boDay = false            // locked for the day when the range is final
 
 var float rangeHigh = na
 var float rangeLow  = na
@@ -88,6 +145,12 @@ var bool  flipLongArmed  = false   // short at range HIGH was stopped out -> lon
 var bool  flipShortArmed = false   // long at range LOW was stopped out  -> short the retest of the low
 var bool  flipLongUsed   = false
 var bool  flipShortUsed  = false
+var bool  highBroken = false   // price has been above the short entry level while we were not short
+var bool  lowBroken  = false   // price has been below the long entry level while we were not long
+var int   shortEntryBar = -1
+var bool  boLongUsed  = false
+var bool  boShortUsed = false
+var int   longEntryBar  = -1
 
 if inRange and not inRange[1]
     // New day's range starts: reset everything
@@ -101,6 +164,11 @@ if inRange and not inRange[1]
     flipShortArmed := false
     flipLongUsed   := false
     flipShortUsed  := false
+    highBroken     := false
+    lowBroken      := false
+    boLongUsed     := false
+    boShortUsed    := false
+    boDay          := false
 else if inRange
     rangeHigh := math.max(rangeHigh, high)
     rangeLow  := math.min(rangeLow, low)
@@ -110,6 +178,7 @@ else if inRange
 // bar, so anything that must happen at a bar's CLOSE is gated on the bar being confirmed.
 if inRange and not nextInRange and barstate.isconfirmed
     rangeDone := true
+    boDay := useVixSwitch and not na(vixChg) and vixChg < -vixDrop
 
 // ---------- Track fills ----------
 totalTrades = strategy.closedtrades + strategy.opentrades
@@ -118,10 +187,16 @@ if newTrade
     tradesToday += totalTrades - nz(totalTrades[1])
     lastId = strategy.opentrades > 0 ? strategy.opentrades.entry_id(strategy.opentrades - 1) : strategy.closedtrades.entry_id(strategy.closedtrades - 1)
     switch lastId
-        "Long"       => longUsed      := true
-        "Short"      => shortUsed     := true
+        "Long"       =>
+            longUsed     := true
+            longEntryBar := bar_index
+        "Short"      =>
+            shortUsed     := true
+            shortEntryBar := bar_index
         "Flip Long"  => flipLongUsed  := true
         "Flip Short" => flipShortUsed := true
+        "BO Long"    => boLongUsed    := true
+        "BO Short"   => boShortUsed   := true
 
 // A main trade that hit its FULL stop (not a breakeven stop) arms the flip for that line.
 if strategy.closedtrades > nz(strategy.closedtrades[1])
@@ -129,7 +204,7 @@ if strategy.closedtrades > nz(strategy.closedtrades[1])
     lId   = strategy.closedtrades.entry_id(li)
     lEnt  = strategy.closedtrades.entry_price(li)
     lExit = strategy.closedtrades.exit_price(li)
-    fullStop = strategy.closedtrades.exit_comment(li) == "SL"
+    fullStop = str.startswith(strategy.closedtrades.exit_comment(li), "SL")
     if fullStop and lId == "Long" and lExit <= lEnt - (slTicks - 1) * tick
         flipShortArmed := true
     if fullStop and lId == "Short" and lExit >= lEnt + (slTicks - 1) * tick
@@ -137,42 +212,103 @@ if strategy.closedtrades > nz(strategy.closedtrades[1])
 
 // ---------- Entries ----------
 flat       = strategy.position_size == 0
-canTrade   = rangeDone and nextInTrade and flat and tradesToday < maxTrades and not na(rangeHigh) and not na(rangeLow)
+canTrade   = rangeDone and nextInTrade and not lastTradeBar and flat and tradesToday < maxTrades and not na(rangeHigh) and not na(rangeLow)
 // Only rest a limit when price is on the correct side of the level, so it fills on a touch
 // rather than instantly at market (e.g. re-arming after being stopped out beyond the level).
 longLvl    = rangeLow  - entryDelay * tick
 shortLvl   = rangeHigh + entryDelay * tick
-longReady  = canTrade and allowLong  and not (onePerLevel and longUsed)  and close > longLvl
-shortReady = canTrade and allowShort and not (onePerLevel and shortUsed) and close < shortLvl
+// A line counts as broken once price trades through its entry level while we are NOT in a trade
+// from that line (e.g. after our short was stopped out above the high, or while we were in a long).
+// From then on any touch of that line comes from OUTSIDE the range (price moving the opposite way),
+// so with skipBroken on it is not traded again today. The bar our own entry filled on doesn't count.
+if rangeDone and inTrade
+    if high >= shortLvl + tick and strategy.position_size >= 0 and bar_index != shortEntryBar
+        highBroken := true
+    if low <= longLvl - tick and strategy.position_size <= 0 and bar_index != longEntryBar
+        lowBroken := true
+
+longReady  = canTrade and not boDay and allowLong  and not (onePerLevel and longUsed)  and close > longLvl  and not (skipBroken and lowBroken)
+shortReady = canTrade and not boDay and allowShort and not (onePerLevel and shortUsed) and close < shortLvl and not (skipBroken and highBroken)
 
 // Resting limit orders at the levels = "touch" entries. OCA so only one side fills.
 if longReady
     strategy.entry("Long", strategy.long, qty = contracts, limit = longLvl, oca_name = "porr", oca_type = strategy.oca.cancel)
-    strategy.exit("Long Exit", "Long", profit = tpLongT, loss = slTicks, comment_profit = "TP", comment_loss = "SL")
+    // Exits are always set as PRICES (limit/stop), never ticks (profit/loss): re-issuing an exit with
+    // the other kind keeps BOTH and TradingView uses whichever is closer, which cut the trend TP short.
+    lTp = useLineTP ? rangeHigh : longLvl + tpLongT * tick
+    lSl = longLvl - slTicks * tick
+    strategy.exit("Long Exit", "Long", limit = lTp, stop = lSl, comment_profit = f_exitTxt("TP", lTp, longLvl, 1, contracts), comment_loss = f_exitTxt("SL", lSl, longLvl, 1, contracts))
 else
     strategy.cancel("Long")
 
 if shortReady
     strategy.entry("Short", strategy.short, qty = contracts, limit = shortLvl, oca_name = "porr", oca_type = strategy.oca.cancel)
-    strategy.exit("Short Exit", "Short", profit = tpShortT, loss = slTicks, comment_profit = "TP", comment_loss = "SL")
+    sTp = useLineTP ? rangeLow : shortLvl - tpShortT * tick
+    sSl = shortLvl + slTicks * tick
+    strategy.exit("Short Exit", "Short", limit = sTp, stop = sSl, comment_profit = f_exitTxt("TP", sTp, shortLvl, -1, contracts), comment_loss = f_exitTxt("SL", sSl, shortLvl, -1, contracts))
 else
     strategy.cancel("Short")
 
 // Flip entries: resting limit back AT the broken line, waiting for price to retest it from the other side.
-flipShortReady = useFlip and canTrade and flipShortArmed and not flipShortUsed and close < rangeLow
-flipLongReady  = useFlip and canTrade and flipLongArmed  and not flipLongUsed  and close > rangeHigh
+flipShortReady = useFlip and not boDay and canTrade and flipShortArmed and not flipShortUsed and close < rangeLow
+flipLongReady  = useFlip and not boDay and canTrade and flipLongArmed  and not flipLongUsed  and close > rangeHigh
 
 if flipShortReady
     strategy.entry("Flip Short", strategy.short, qty = contracts, limit = rangeLow, oca_name = "porr", oca_type = strategy.oca.cancel)
-    strategy.exit("Flip Short Exit", "Flip Short", profit = flipTp, loss = flipSl, comment_profit = "TP", comment_loss = "SL")
+    strategy.exit("Flip Short Exit", "Flip Short", limit = rangeLow - flipTp * tick, stop = rangeLow + flipSl * tick, comment_profit = f_exitTxt("TP", rangeLow - flipTp * tick, rangeLow, -1, contracts), comment_loss = f_exitTxt("SL", rangeLow + flipSl * tick, rangeLow, -1, contracts))
 else
     strategy.cancel("Flip Short")
 
 if flipLongReady
     strategy.entry("Flip Long", strategy.long, qty = contracts, limit = rangeHigh, oca_name = "porr", oca_type = strategy.oca.cancel)
-    strategy.exit("Flip Long Exit", "Flip Long", profit = flipTp, loss = flipSl, comment_profit = "TP", comment_loss = "SL")
+    strategy.exit("Flip Long Exit", "Flip Long", limit = rangeHigh + flipTp * tick, stop = rangeHigh - flipSl * tick, comment_profit = f_exitTxt("TP", rangeHigh + flipTp * tick, rangeHigh, 1, contracts), comment_loss = f_exitTxt("SL", rangeHigh - flipSl * tick, rangeHigh, 1, contracts))
 else
     strategy.cancel("Flip Long")
+
+// Breakout entries (VIX-drop days): stop orders AT the range lines, placed while price is still inside.
+boCan        = boDay and canTrade and tradesToday < boMaxTrades
+boLongReady  = boCan and allowLong  and not boLongUsed  and close < rangeHigh
+boShortReady = boCan and allowShort and not boShortUsed and close > rangeLow
+if boLongReady
+    strategy.entry("BO Long", strategy.long, qty = contracts, stop = rangeHigh, oca_name = "porr", oca_type = strategy.oca.cancel)
+    strategy.exit("BO Long Exit", "BO Long", limit = rangeHigh + boTp * tick, stop = rangeHigh - boSl * tick, comment_profit = f_exitTxt("TP", rangeHigh + boTp * tick, rangeHigh, 1, contracts), comment_loss = f_exitTxt("SL", rangeHigh - boSl * tick, rangeHigh, 1, contracts))
+else
+    strategy.cancel("BO Long")
+if boShortReady
+    strategy.entry("BO Short", strategy.short, qty = contracts, stop = rangeLow, oca_name = "porr", oca_type = strategy.oca.cancel)
+    strategy.exit("BO Short Exit", "BO Short", limit = rangeLow - boTp * tick, stop = rangeLow + boSl * tick, comment_profit = f_exitTxt("TP", rangeLow - boTp * tick, rangeLow, -1, contracts), comment_loss = f_exitTxt("SL", rangeLow + boSl * tick, rangeLow, -1, contracts))
+else
+    strategy.cancel("BO Short")
+
+// ---------- Webhook bridge alerts (realtime only) ----------
+// One JSON alert per change of intent: place / move / cancel per entry tag. varip keeps the state
+// across intrabar ticks so an unchanged order is not re-sent on every tick.
+f_bmsg(string action, string tag, string side, string typ, float price, float tpT, float slT, float beT, float beO, bool ube) =>
+    '{"pass":"' + bridgePass + '","id":"' + tag + "-" + action + "-" + str.tostring(time) + "-" + str.tostring(price, format.mintick) +
+     '","action":"' + action + '","tag":"' + tag + '","side":"' + side + '","type":"' + typ + '","price":' + str.tostring(price, format.mintick) +
+     ',"qty":' + str.tostring(contracts) + ',"tp":' + str.tostring(tpT) + ',"sl":' + str.tostring(slT) +
+     ',"be_trig":' + str.tostring(beT) + ',"be_off":' + str.tostring(beO) + ',"use_be":' + (ube ? "true" : "false") + '}'
+varip array<float> armedPx = array.new_float(6, na)
+f_sync(int idx, bool ready, string tag, string side, string typ, float price, float tpT, float slT, float beT, float beO, bool ube) =>
+    if useBridge and barstate.isrealtime
+        cur = array.get(armedPx, idx)
+        if ready and (na(cur) or cur != price)
+            alert(f_bmsg("place", tag, side, typ, price, tpT, slT, beT, beO, ube), alert.freq_all)
+            array.set(armedPx, idx, price)
+        else if not ready and not na(cur)
+            alert(f_bmsg("cancel", tag, side, typ, cur, 0, 0, 0, 0, false), alert.freq_all)
+            array.set(armedPx, idx, na)
+lineTpL = useLineTP ? math.round((rangeHigh - longLvl) / tick) : tpLongT
+lineTpS = useLineTP ? math.round((shortLvl - rangeLow) / tick) : tpShortT
+f_sync(0, longReady,      "Long",       "BUY",  "LIMIT", longLvl,   lineTpL, slTicks, beTrigger, beOffset, useBE)
+f_sync(1, shortReady,     "Short",      "SELL", "LIMIT", shortLvl,  lineTpS, slTicks, beTrigger, beOffset, useBE)
+f_sync(2, flipLongReady,  "Flip Long",  "BUY",  "LIMIT", rangeHigh, flipTp,  flipSl,  beTrigger, beOffset, useBE)
+f_sync(3, flipShortReady, "Flip Short", "SELL", "LIMIT", rangeLow,  flipTp,  flipSl,  beTrigger, beOffset, useBE)
+f_sync(4, boLongReady,    "BO Long",    "BUY",  "STOP",  rangeHigh, boTp,    boSl,    boBeTrig,  boBeOff,  boUseBE)
+f_sync(5, boShortReady,   "BO Short",   "SELL", "STOP",  rangeLow,  boTp,    boSl,    boBeTrig,  boBeOff,  boUseBE)
+varip bool beAlertSent = false
+if strategy.position_size == 0
+    beAlertSent := false
 
 // ---------- Exits / breakeven ----------
 // Best price reached since the fill. With "On history bar tick" on, this updates on every
@@ -183,13 +319,20 @@ var float bestLow  = na
 var int   tradeTp  = na   // TP for the open trade, locked at entry (trend TP or flip TP)
 var int   tradeSl  = na
 var string tradeId = na
+var bool  tradeUseBE = false
+var int   tradeBeT   = na
+var int   tradeBeO   = na
 if strategy.position_size != 0
     entryBar = strategy.opentrades.entry_bar_index(strategy.opentrades - 1)
     if bar_index == entryBar
         tradeId := strategy.opentrades.entry_id(strategy.opentrades - 1)
         isFlip   = str.startswith(tradeId, "Flip")
-        tradeTp := isFlip ? flipTp : strategy.position_size > 0 ? tpLongT : tpShortT
-        tradeSl := isFlip ? flipSl : slTicks
+        isBO     = str.startswith(tradeId, "BO")
+        tradeTp := isBO ? boTp : isFlip ? flipTp : strategy.position_size > 0 ? tpLongT : tpShortT
+        tradeSl := isBO ? boSl : isFlip ? flipSl : slTicks
+        tradeUseBE := isBO ? boUseBE : useBE
+        tradeBeT := isBO ? boBeTrig : beTrigger
+        tradeBeO := isBO ? boBeOff : beOffset
         // On the entry bar the high/low may include price from BEFORE the fill. They are only
         // safe to use if the bar opened through the level (limit filled at the open);
         // otherwise use the current price, which is always after the fill.
@@ -200,25 +343,58 @@ if strategy.position_size != 0
         bestLow  := math.min(bestLow, low)
 
 if strategy.position_size > 0
-    tp = entryPx + nz(tradeTp, tpLongT) * tick
+    tp = useLineTP and not str.startswith(tradeId, "Flip") and not str.startswith(tradeId, "BO") ? rangeHigh : entryPx + nz(tradeTp, tpLongT) * tick
     sl = entryPx - nz(tradeSl, slTicks) * tick
-    if useBE and bestHigh >= entryPx + beTrigger * tick
-        sl := entryPx + beOffset * tick
-    strategy.exit(tradeId + " Exit", tradeId, limit = tp, stop = sl, comment_profit = "TP", comment_loss = "SL")
+    if tradeUseBE and bestHigh >= entryPx + nz(tradeBeT, beTrigger) * tick
+        sl := entryPx + nz(tradeBeO, beOffset) * tick
+        if useBridge and barstate.isrealtime and not beAlertSent
+            alert('{"pass":"' + bridgePass + '","id":"be-' + str.tostring(time) + '","action":"breakeven","tag":"' + tradeId + '"}', alert.freq_all)
+            beAlertSent := true
+    strategy.exit(tradeId + " Exit", tradeId, limit = tp, stop = sl, comment_profit = f_exitTxt("TP", tp, entryPx, 1, strategy.position_size), comment_loss = f_exitTxt("SL", sl, entryPx, 1, strategy.position_size))
 else if strategy.position_size < 0
-    tp = entryPx - nz(tradeTp, tpShortT) * tick
+    tp = useLineTP and not str.startswith(tradeId, "Flip") and not str.startswith(tradeId, "BO") ? rangeLow : entryPx - nz(tradeTp, tpShortT) * tick
     sl = entryPx + nz(tradeSl, slTicks) * tick
-    if useBE and bestLow <= entryPx - beTrigger * tick
-        sl := entryPx - beOffset * tick
-    strategy.exit(tradeId + " Exit", tradeId, limit = tp, stop = sl, comment_profit = "TP", comment_loss = "SL")
+    if tradeUseBE and bestLow <= entryPx - nz(tradeBeT, beTrigger) * tick
+        sl := entryPx - nz(tradeBeO, beOffset) * tick
+        if useBridge and barstate.isrealtime and not beAlertSent
+            alert('{"pass":"' + bridgePass + '","id":"be-' + str.tostring(time) + '","action":"breakeven","tag":"' + tradeId + '"}', alert.freq_all)
+            beAlertSent := true
+    strategy.exit(tradeId + " Exit", tradeId, limit = tp, stop = sl, comment_profit = f_exitTxt("TP", tp, entryPx, -1, -strategy.position_size), comment_loss = f_exitTxt("SL", sl, entryPx, -1, -strategy.position_size))
 
-if flatAtEnd and inTrade and not nextInTrade and barstate.isconfirmed
-    strategy.close_all(comment = "EOD")
+// immediately = true: close at THIS bar's close, not the next bar's open (which after an early
+// close or the daily break would be in the next session).
+if useBridge and barstate.isrealtime and flatAtEnd and lastTradeBar and barstate.isconfirmed
+    alert('{"pass":"' + bridgePass + '","id":"eod-' + str.tostring(time) + '","action":"flatten"}', alert.freq_all)
+if flatAtEnd and lastTradeBar and barstate.isconfirmed
+    strategy.close_all(comment = f_exitTxt("EOD", close, entryPx, int(math.sign(strategy.position_size)), math.abs(strategy.position_size)), immediately = true)
+// Safety net: never hold a position outside the trade window (e.g. an order that filled at the
+// open after a session break). Closes it at this bar's close.
+if flatAtEnd and not inTrade and strategy.position_size != 0 and barstate.isconfirmed
+    strategy.close_all(comment = f_exitTxt("EOD", close, entryPx, int(math.sign(strategy.position_size)), math.abs(strategy.position_size)), immediately = true)
 
 // ---------- Visuals ----------
 showLine = showLevels and rangeDone and inTrade
 plot(showLine ? rangeHigh : na, "Range High", color.red, 2, plot.style_linebr)
 plot(showLine ? rangeLow  : na, "Range Low", color.green, 2, plot.style_linebr)
+
+// Dashed grey mid-range line and a range-size label above the top line, both following the
+// current bar to the right while the trade window is open (one of each per day).
+var line  midLine = na
+var label rngLbl  = na
+if showLine and not showLine[1]
+    rangeTicks = (rangeHigh - rangeLow) / tick
+    if showMid
+        midLine := line.new(bar_index, (rangeHigh + rangeLow) / 2, bar_index, (rangeHigh + rangeLow) / 2, color = color.gray, style = line.style_dashed, width = 1)
+    if showRngLbl
+        rngLbl := label.new(bar_index, rangeHigh, "Range " + str.tostring(rangeHigh - rangeLow, format.mintick) + " pts (" + str.tostring(rangeTicks, "#") + " ticks)", style = label.style_label_lower_left, color = color.new(color.black, 100), textcolor = color.red, size = size.small)
+if showLine
+    if not na(midLine)
+        line.set_x2(midLine, bar_index)
+    if not na(rngLbl)
+        label.set_x(rngLbl, bar_index)
+if not showLine and showLine[1]
+    midLine := na
+    rngLbl  := na
 bgcolor(showRangeBg and inRange ? color.new(color.blue, 88) : na, title = "Range window")
 
 posLong  = strategy.position_size > 0
@@ -229,7 +405,7 @@ plot(showTrend ? htfEma : na, "Trend EMA", trendUp ? color.teal : color.orange, 
 // ---------- End of day ----------
 // Retire the day's levels when the trade window closes, so a day with no range bars
 // (holiday / missing data) can't trade off yesterday's stale levels.
-if inTrade and not nextInTrade and barstate.isconfirmed
+if lastTradeBar and barstate.isconfirmed
     rangeDone := false
 
 // ---------- Stats ----------
@@ -253,8 +429,8 @@ if barstate.isconfirmed and strategy.closedtrades > processed
         eBar   = strategy.closedtrades.entry_bar_index(i)
         xBar   = strategy.closedtrades.exit_bar_index(i)
         // TP exits are tagged "TP" (works for both the normal and the with-trend TP)
-        isTP   = strategy.closedtrades.exit_comment(i) == "TP"
-        isEOD  = strategy.closedtrades.exit_comment(i) == "EOD"
+        isTP   = str.startswith(strategy.closedtrades.exit_comment(i), "TP")
+        isEOD  = str.startswith(strategy.closedtrades.exit_comment(i), "EOD")
         // Entry bar: everything before a limit fill is on the far side of the entry, so the
         // bar's low (long) / high (short) is after the fill and safe to use.
         worst = isLong ? low[bar_index - eBar] : high[bar_index - eBar]
@@ -280,7 +456,7 @@ if barstate.isconfirmed and strategy.closedtrades > processed
         // Same definition as the Strategy Tester's "Profitable trades" (net of commission).
         array.push(stWin, strategy.closedtrades.profit(i) > 0)
         array.push(stDip, dip)
-        array.push(stMain, not str.startswith(strategy.closedtrades.entry_id(i), "Flip"))
+        array.push(stMain, not str.startswith(strategy.closedtrades.entry_id(i), "Flip") and not str.startswith(strategy.closedtrades.entry_id(i), "BO"))
         array.push(stPnl, strategy.closedtrades.profit(i))
         array.push(stLong, isLong)
     processed := strategy.closedtrades
