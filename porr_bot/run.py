@@ -77,7 +77,8 @@ def live(cfg: Config, raw: dict, tz: str) -> None:
         broker = PaperBroker(cfg.tick)
         feed = WebullFeed(api, cfg.symbol, tz)
     else:
-        real = WebullBroker(key, secret, wb["account_id"], cfg.symbol, sandbox=sandbox)
+        real = WebullBroker(key, secret, wb["account_id"], cfg.symbol, sandbox=sandbox,
+                            order_events=wb.get("order_events", False))
         broker = real
         feed = WebullFeed(real.api_client, cfg.symbol, tz)
     eng = Engine(cfg, broker)

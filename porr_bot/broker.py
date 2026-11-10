@@ -108,7 +108,7 @@ class WebullBroker:
     """
 
     def __init__(self, app_key: str, app_secret: str, account_id: str, symbol: str,
-                 sandbox: bool = True, region: str = "us"):
+                 sandbox: bool = True, region: str = "us", order_events: bool = True):
         from webull.core.client import ApiClient
         from webull.trade.trade_client import TradeClient
         from webull.trade.trade_events_client import TradeEventsClient
@@ -128,9 +128,12 @@ class WebullBroker:
         self._fills: "queue.Queue[Fill]" = queue.Queue()
 
         # Order status push (gRPC). VERIFY: sandbox host override if the SDK needs one.
-        self.events = TradeEventsClient(app_key, app_secret, region)
-        self.events.on_events_message = self._on_event
-        threading.Thread(target=self.events.do_subscribe, args=([account_id],), daemon=True).start()
+        # Order-status push stream. Optional: it is a persistent connection, and some Webull accounts
+        # allow only one. With order_events=False fills are found by polling order detail instead.
+        if order_events:
+            self.events = TradeEventsClient(app_key, app_secret, region)
+            self.events.on_events_message = self._on_event
+            threading.Thread(target=self.events.do_subscribe, args=([account_id],), daemon=True).start()
 
     # -- orders --------------------------------------------------------------------------------
     def _place(self, tag, side, qty, order_type, **prices) -> str:

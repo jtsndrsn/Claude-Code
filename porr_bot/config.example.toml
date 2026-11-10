@@ -47,6 +47,8 @@ sandbox      = true        # true = Webull test environment. Set false only afte
 paper        = true        # true = LIVE Webull prices, simulated fills, no orders sent (paper trading)
 exit_after_session = true # stop after the trade window; schedule the bot to start again each morning
 poll_seconds = 2.0         # price poll interval
+order_events = false       # live mode only: true = use Webull's order-status push stream (a persistent
+                           # connection). false = poll order status instead, which needs no streaming slot.
 
 [email]                    # daily P&L email after the session (today / week-to-date / month-to-date)
 enabled   = false
