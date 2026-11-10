@@ -254,7 +254,7 @@ def main() -> None:
                 last_report = now.date()
         except Exception:
             log.exception("loop error (continuing)")
-        _time.sleep(float(br.get("poll_seconds", 1.0)))
+        _time.sleep(float(br.get("poll_seconds", 2.5)))
 
 
 if __name__ == "__main__":

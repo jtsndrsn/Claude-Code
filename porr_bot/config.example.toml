@@ -70,6 +70,6 @@ smtp_port = 587
 [bridge]                   # TradingView -> Webull bridge (python bridge.py --config config.toml)
 host = "0.0.0.0"
 port = 80                  # TradingView webhooks only call ports 80 (http) or 443 (https)
-poll_seconds = 1.0         # how often fills are checked on Webull
+poll_seconds = 2.5         # how often fills are checked (paper account limit: 30 order checks per minute)
 # The passphrase is NOT stored here: set BRIDGE_PASSPHRASE (same text as in the TradingView script).
 # Orders go to the Webull PAPER account while [webull] sandbox = true.
