@@ -14,13 +14,13 @@ class ReportTest(unittest.TestCase):
     def test_day_week_month(self):
         p = os.path.join(tempfile.mkdtemp(), "t.csv"); open(p, "w").write(ROWS)
         s = summarize(load_trades(p), date(2026, 11, 6))
-        # per trade: ticks * $0.50 * 10 - $14 commission
-        self.assertAlmostEqual(s["today"], (800 * 5 - 14) + (-300 * 5 - 14))     # 2472
-        self.assertAlmostEqual(s["week"], s["today"] + (500 * 5 - 14) + (-100 * 5 - 14))
+        # per trade: ticks * $0.50 * 10 - $14.80 commission (Webull $0.74 per side)
+        self.assertAlmostEqual(s["today"], (800 * 5 - 14.8) + (-300 * 5 - 14.8))     # 2472
+        self.assertAlmostEqual(s["week"], s["today"] + (500 * 5 - 14.8) + (-100 * 5 - 14.8))
         self.assertEqual(s["week_n"], 4)
         self.assertEqual(s["month_n"], 4)                                            # Oct 30 excluded
         subj, body = build_message(s, date(2026, 11, 6), "paper", "BREAKOUT (VIX drop)")
-        self.assertIn("today +$2,472.00", subj)
+        self.assertIn("today +$2,470.40", subj)
         self.assertIn("BO Long", body)
 
     def test_no_trades(self):

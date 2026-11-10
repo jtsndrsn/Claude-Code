@@ -42,10 +42,18 @@ bo_max_trades   = 2
 trade_log       = "trades.csv"
 
 [webull]
-account_id   = "YOUR_FUTURES_ACCOUNT_ID"   # the account labelled "Futures"
-sandbox      = true        # true = Webull test environment. Set false only after sandbox testing.
-paper        = true        # true = LIVE Webull prices, simulated fills, no orders sent (paper trading)
-exit_after_session = true # stop after the trade window; schedule the bot to start again each morning
+# Market data always uses the LIVE key (env WEBULL_APP_KEY / WEBULL_APP_SECRET) on Webull production and
+# needs the OpenAPI futures data subscription (OpenAPI Advanced Quotes -> CME).
+# Order modes:
+#   paper = true                   -> fills simulated inside the bot, no orders sent anywhere
+#   paper = false, sandbox = true  -> orders go to the Webull PAPER account
+#                                     (env WEBULL_PAPER_APP_KEY / WEBULL_PAPER_APP_SECRET)
+#   paper = false, sandbox = false -> REAL orders on the live account. Only after paper testing!
+paper        = false
+sandbox      = true
+paper_account_id = "YOUR_PAPER_FUTURES_ACCOUNT_ID"   # from wb_check.py, test server, "Futures"
+account_id   = "YOUR_LIVE_FUTURES_ACCOUNT_ID"        # live account labelled "Futures" (real orders only)
+exit_after_session = true  # stop after the trade window; schedule the bot to start again each morning
 poll_seconds = 2.0         # price poll interval
 order_events = false       # live mode only: true = use Webull's order-status push stream (a persistent
                            # connection). false = poll order status instead, which needs no streaming slot.

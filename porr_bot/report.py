@@ -27,7 +27,7 @@ def load_trades(path: str) -> list[dict]:
         return list(csv.DictReader(fh))
 
 
-def summarize(trades: list[dict], day: date, tick_value: float = 0.5, comm_per_side: float = 0.7) -> dict:
+def summarize(trades: list[dict], day: date, tick_value: float = 0.5, comm_per_side: float = 0.74) -> dict:
     """Net P&L for `day`, the week (Mon..day) and the month (1st..day) - by trade ENTRY date."""
     week_start = day - timedelta(days=day.weekday())
     month_start = day.replace(day=1)
@@ -81,7 +81,7 @@ def send_email(cfg: dict, subject: str, body: str) -> None:
 
 
 def daily_report(trade_log: str, email_cfg: dict, day: date, mode: str, regime: str | None = None,
-                 tick_value: float = 0.5, comm_per_side: float = 0.7) -> str:
+                 tick_value: float = 0.5, comm_per_side: float = 0.74) -> str:
     s = summarize(load_trades(trade_log), day, tick_value, comm_per_side)
     subject, body = build_message(s, day, mode, regime)
     log.info("%s\n%s", subject, body)

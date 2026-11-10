@@ -62,25 +62,33 @@ def live(cfg: Config, raw: dict, tz: str) -> None:
     from feeds import WebullFeed
 
     wb = raw.get("webull", {})
+    # Market data always comes from Webull PRODUCTION with the live key (needs the OpenAPI futures data
+    # subscription). Orders depend on the mode:
+    #   paper = true                    -> simulated fills inside the bot, no orders sent anywhere
+    #   paper = false, sandbox = true   -> orders go to the Webull PAPER account (paper-trade key)
+    #   paper = false, sandbox = false  -> REAL orders on the live account (live key)
     key, secret = os.environ.get("WEBULL_APP_KEY"), os.environ.get("WEBULL_APP_SECRET")
     if not key or not secret:
-        sys.exit("Set WEBULL_APP_KEY and WEBULL_APP_SECRET environment variables.")
+        sys.exit("Set WEBULL_APP_KEY and WEBULL_APP_SECRET (live key, used for market data).")
     sandbox = wb.get("sandbox", True)
     paper = wb.get("paper", True)
-    log.warning("LIVE MODE  sandbox=%s  paper_fills=%s  symbol=%s", sandbox, paper, cfg.symbol)
+    mode = "SIMULATED fills" if paper else ("WEBULL PAPER account" if sandbox else "LIVE ACCOUNT - REAL ORDERS")
+    log.warning("LIVE MODE: %s  symbol=%s", mode, cfg.symbol)
 
+    from webull.core.client import ApiClient
+    data_api = ApiClient(key, secret, "us"); data_api.add_endpoint("us", "api.webull.com")
+    feed = WebullFeed(data_api, cfg.symbol, tz)
     if paper:
-        # Paper trading: LIVE Webull prices (production market data), simulated fills, no orders sent,
-        # no trading connection at all.
-        from webull.core.client import ApiClient
-        api = ApiClient(key, secret, "us"); api.add_endpoint("us", "api.webull.com")
         broker = PaperBroker(cfg.tick)
-        feed = WebullFeed(api, cfg.symbol, tz)
+    elif sandbox:
+        pk, ps = os.environ.get("WEBULL_PAPER_APP_KEY"), os.environ.get("WEBULL_PAPER_APP_SECRET")
+        if not pk or not ps:
+            sys.exit("Set WEBULL_PAPER_APP_KEY and WEBULL_PAPER_APP_SECRET (paper-trade key) for the Webull paper account.")
+        broker = WebullBroker(pk, ps, wb["paper_account_id"], cfg.symbol, sandbox=True,
+                              order_events=wb.get("order_events", False))
     else:
-        real = WebullBroker(key, secret, wb["account_id"], cfg.symbol, sandbox=sandbox,
-                            order_events=wb.get("order_events", False))
-        broker = real
-        feed = WebullFeed(real.api_client, cfg.symbol, tz)
+        broker = WebullBroker(key, secret, wb["account_id"], cfg.symbol, sandbox=False,
+                              order_events=wb.get("order_events", False))
     eng = Engine(cfg, broker)
     poll = float(wb.get("poll_seconds", 2.0))
     stop_file = os.path.join(HERE, "STOP")
@@ -117,7 +125,7 @@ def live(cfg: Config, raw: dict, tz: str) -> None:
             log.warning("Trade window over and flat: exiting for today")
             from report import daily_report
             daily_report(cfg.trade_log, raw.get("email", {}), now_ct.date(),
-                         "paper" if paper else ("sandbox" if sandbox else "LIVE"),
+                         "simulated" if paper else ("Webull paper" if sandbox else "LIVE"),
                          regime="BREAKOUT (VIX drop)" if eng.breakout_day else "fade")
             break
         if os.path.exists(stop_file):

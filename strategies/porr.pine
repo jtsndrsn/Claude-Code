@@ -24,7 +24,7 @@
 strategy("Pre-Open Range Reversal", shorttitle = "PORR", overlay = true,
      initial_capital = 50000, default_qty_type = strategy.fixed, default_qty_value = 1,
      margin_long = 0, margin_short = 0,
-     commission_type = strategy.commission.cash_per_contract, commission_value = 0.7,
+     commission_type = strategy.commission.cash_per_contract, commission_value = 0.74,   // Webull: clearing .12 + exchange .35 + NFA .02 + execution .25
      // Limits must trade 1 tick THROUGH the level to fill (a bare touch is not a guaranteed fill).
      backtest_fill_limits_assumption = 1,
      // Use lower-timeframe data to resolve fills inside each chart bar (needs Premium+ plan).
@@ -87,12 +87,12 @@ showRangeBg = input.bool(true, "Shade range window", group = grpV)
 showMid     = input.bool(true, "Show mid-range line (dashed)", group = grpV)
 showRngLbl  = input.bool(true, "Show range size label", group = grpV)
 showStats   = input.bool(true, "Show stats table", group = grpV)
-showPnlMark = input.bool(true, "Show P&L on exit marks", group = grpV, tooltip = "Adds the trade's net P&L (after commission) to the TP / SL / EOD text on the chart's exit marks, e.g. \"TP +$198.60\". Uses the $0.70-per-contract-per-side commission set in this script; slippage is not included.")
+showPnlMark = input.bool(true, "Show P&L on exit marks", group = grpV, tooltip = "Adds the trade's net P&L (after commission) to the TP / SL / EOD text on the chart's exit marks, e.g. \"TP +$198.60\". Uses the $0.74-per-contract-per-side commission set in this script; slippage is not included.")
 statsPosStr = input.string("Top right", "Stats table position", options = ["Top right", "Top left", "Bottom right", "Bottom left"], group = grpV)
 
 // ---------- Session state ----------
 tick    = syminfo.mintick
-COMM_PER_SIDE = 0.7   // keep in step with commission_value in strategy() above
+COMM_PER_SIDE = 0.74  // keep in step with commission_value in strategy() above
 
 // Exit-mark text: "TP" / "SL" / "EOD", plus the trade's net P&L when showPnlMark is on.
 // The stats below only look at how the text STARTS, so the P&L suffix doesn't affect them.
