@@ -86,3 +86,24 @@ TP 800 / BE 200->100 kept, breakout SL varied (96 VIX-drop days; system = fade A
 | 250 | +$19,475 | +$27,058 | +$46,533 | 65% | +$133,458 | $9,990 |
 | 300 (v2.1 default) | +$21,200 | +$30,558 | +$51,758 | 68% | +$138,683 | $9,240 |
 Scaling the BE trigger with the stop (1R) was worse in every case; the fixed 200-tick BE trigger is what helps.
+
+## v3.0 search (~80,000 variations)
+Simulator `sys2.py` (fade + VIX-drop breakout system, new options, day/entry filters; reproduces v2.2 within $30 of the
+bot engine), batch runner `g2.py`, account-growth model `grow.py`. 10 MNQ, $0.74/side commission.
+
+| | Net | Max DD | Win % | PF | 2025 | 2026 | Losing months |
+|---|---|---|---|---|---|---|---|
+| v2.2 | +$138,161 | $9,268 | 58.0 | 1.79 | +$60,547 | +$77,614 | 2/22 |
+| v3.0 balanced | +$206,890 | $3,948 | 72.4 | 2.32 | +$106,803 | +$100,087 | 1/22 |
+| v3.0 without the momentum filter | +$193,234 | $5,572 | 70.6 | 2.05 | +$93,366 | +$99,869 | 1/22 |
+
+v3.0: SL 175 (BE still 100 -> +50), with-trend TP 1000, breakout stops 10 ticks beyond the lines with TP 1200,
+skip LONG fades when the prior day's MACD histogram > 0 and +DI > -DI (the same rule for shorts: +$175k, worse).
+- Stop loss is the main lever: 120-200 all beat 100 (a 100-tick stop stopped trades out before breakeven).
+- Rejected (all lowered profit): trailing stops, partial take-profits, time stops, 1-min RSI entry filter,
+  time-of-day cutoff, re-entries, one side only, other trend sources, VIX thresholds other than 0.9,
+  and day filters on VIX level, gap, overnight range, ATR, daily RSI/ADX, day of week.
+- Out-of-sample: settings chosen on 2025 alone earned $79k-90k in 2026 (v2.2: $77.6k) with lower drawdown.
+  The momentum filter was found on both years and only helped 2025: the least proven part.
+- Growth plan ($5k, 2 MNQ +2 per $1k profit to 20 MNQ, then 2 NQ +1 per $10k to 5 NQ, NQ $2.00/side):
+  v3.0 ends at ~$903k (largest drawdown $19.3k), v2.2 at ~$579k ($44.5k).

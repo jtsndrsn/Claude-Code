@@ -9,6 +9,8 @@ No PC or Claude session needs to be running.
 
 ## Render (bridge host)
 - URL / webhook: https://claude-code-pl6a.onrender.com/   (GET shows {"ok": true, "position": ..., "working": [...]})
+- Status page: https://claude-code-pl6a.onrender.com/status?key=<STATUS_KEY> (position, orders, today's trades and P&L,
+  activity; refreshes every 15 s). Optional env STATUS_KEY protects it; without it the page is public (read-only).
 - Service type: Web Service, plan Starter ($7/mo, 0.5 CPU / 512 MB), region Ohio
 - Repo `jtsndrsn/Claude-Code`, branch `claude/eager-archimedes-jz42ll` (switch to `main` once PR #1 is merged)
 - Root Directory `porr_bot`; Build `pip install -r requirements.txt`;
