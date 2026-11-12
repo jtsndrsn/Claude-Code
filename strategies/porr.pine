@@ -1,5 +1,10 @@
 //@version=6
-// Pre-Open Range Reversal  -  Version 2.2
+// Pre-Open Range Reversal  -  Version 3.0
+// v3.0 ("v3 balanced", from an ~80,000-variation search on 1-second data, Feb 2025 - Nov 2026):
+//       stop loss 175 (was 100), with-trend TP 1000 (was 750), breakout stops 10 ticks beyond the
+//       lines with TP 1200 (was AT the lines, TP 800), and a daily momentum filter that skips longs
+//       when the daily MACD histogram > 0 and +DI > -DI. Backtest 10 MNQ: +$206.9k, max DD $3.9k,
+//       72.4% winners (v2.2: +$138.2k, $9.3k, 58.0%).
 // v2.2: optional webhook alerts that mirror every order intent to the TradingView -> Webull bridge.
 // v2.1: breakout stop loss default 300 ticks (was 200): better in both 2025 and 2026.
 // v2.0: optimised defaults (07:00-08:30 range, 08:30-11:00 window, SL 100 / TP 500, BE 100->50,
@@ -43,7 +48,7 @@ flatAtEnd = input.bool(true, "Flatten open trade at end of trade window", group 
 
 grpR = "Risk (ticks)"
 tpTicks   = input.int(500, "Take profit (ticks)", minval = 1, group = grpR)
-slTicks   = input.int(100, "Stop loss (ticks)", minval = 1, group = grpR)
+slTicks   = input.int(175, "Stop loss (ticks)", minval = 1, group = grpR)
 useBE     = input.bool(true, "Use breakeven stop", group = grpR)
 beTrigger = input.int(100, "Breakeven trigger (ticks in profit)", minval = 1, group = grpR)
 beOffset  = input.int(50, "Breakeven offset (ticks beyond entry)", group = grpR, tooltip = "0 = stop exactly at entry. 50 = lock in 50 ticks.")
@@ -52,7 +57,7 @@ useLineTP = input.bool(false, "TP at the opposite range line", group = grpR, too
 
 grpF = "Trend filter (take profit)"
 useTrendTP   = input.bool(true, "Use bigger TP on with-trend trades", group = grpF, tooltip = "Longs in an uptrend and shorts in a downtrend use the with-trend TP. Counter-trend trades keep the normal TP.")
-tpTrendTicks = input.int(750, "With-trend take profit (ticks)", minval = 1, group = grpF)
+tpTrendTicks = input.int(1000, "With-trend take profit (ticks)", minval = 1, group = grpF)
 trendTf      = input.timeframe("1D", "Trend timeframe", group = grpF, tooltip = "Fixed timeframe so the trend reads the same on every chart timeframe. Keep it at or above the chart timeframe.")
 trendLen     = input.int(50, "Trend EMA length", minval = 1, group = grpF, tooltip = "Uptrend = last closed trend-timeframe bar closed above its EMA. Downtrend = closed below.")
 showTrend    = input.bool(false, "Show trend EMA", group = grpF)
@@ -66,12 +71,16 @@ grpB = "VIX regime: breakout days"
 useVixSwitch = input.bool(true, "Breakout mode after a VIX drop", group = grpB, tooltip = "If VIX closed more than the threshold LOWER yesterday than the day before, today trades BREAKOUTS of the range (buy stop at the high, sell stop at the low) instead of fading the lines. Backtests: every such day broke at least one line and fading them lost money.")
 vixSym       = input.symbol("CBOE:VIX", "VIX symbol", group = grpB)
 vixDrop      = input.float(0.9, "VIX drop threshold (points)", minval = 0, step = 0.1, group = grpB)
-boTp         = input.int(800, "Breakout take profit (ticks)", minval = 1, group = grpB)
+boTp         = input.int(1200, "Breakout take profit (ticks)", minval = 1, group = grpB)
 boSl         = input.int(300, "Breakout stop loss (ticks)", minval = 1, group = grpB)
+boOffset     = input.int(10, "Breakout entry offset (ticks beyond line)", minval = 0, group = grpB, tooltip = "Buy stop this many ticks ABOVE the range high, sell stop this many ticks BELOW the range low, so a bare poke of the line doesn't trigger the trade.")
 boUseBE      = input.bool(true, "Breakout breakeven stop", group = grpB)
 boBeTrig     = input.int(200, "Breakout BE trigger (ticks)", minval = 1, group = grpB)
 boBeOff      = input.int(100, "Breakout BE offset (ticks)", group = grpB)
 boMaxTrades  = input.int(2, "Breakout max trades per day", minval = 1, maxval = 2, group = grpB, tooltip = "One per side: after the first breakout trade ends, the other side can still trigger.")
+
+grpM = "Daily momentum filter"
+useMomFilter = input.bool(true, "Skip longs when daily momentum is up", group = grpM, tooltip = "Skips the LONG fade at the range low when yesterday's daily MACD histogram (12/26/9) is above 0 AND +DI is above -DI (DMI 14). In the backtest these were the weakest trades: skipping them raised profit and cut the drawdown. The same rule for shorts lost money, so shorts are not filtered.")
 
 grpW = "Webhook bridge (TradingView -> Webull)"
 useBridge  = input.bool(false, "Send order alerts to the Webull bridge", group = grpW, tooltip = "Sends a JSON alert whenever the strategy places, moves or cancels an entry order, moves a stop to breakeven, or flattens at the end of the window. Create ONE alert on this strategy with condition 'alert() function calls only' and the bridge server's webhook URL.")
@@ -134,6 +143,14 @@ todayKey = year(time, tz) * 10000 + month(time, tz) * 100 + dayofmonth(time, tz)
 vixKey   = year(vT, "America/New_York") * 10000 + month(vT, "America/New_York") * 100 + dayofmonth(vT, "America/New_York")
 vixChg   = vixKey >= todayKey ? vC1 - vC2 : vC0 - vC1
 var bool boDay = false            // locked for the day when the range is final
+
+// ---------- Daily momentum (MACD histogram + DMI), last CLOSED daily bar, never repaints ----------
+f_dmom() =>
+    [_m, _s, _h] = ta.macd(close, 12, 26, 9)
+    [_dp, _dn, _adx] = ta.dmi(14, 14)
+    [_h[1], _dp[1], _dn[1]]
+[dHist, dPlus, dMinus] = request.security(syminfo.tickerid, "D", f_dmom(), lookahead = barmerge.lookahead_on)
+momSkipLong = useMomFilter and not na(dHist) and not na(dPlus) and dHist > 0 and dPlus > dMinus
 
 var float rangeHigh = na
 var float rangeLow  = na
@@ -227,7 +244,7 @@ if rangeDone and inTrade
     if low <= longLvl - tick and strategy.position_size <= 0 and bar_index != longEntryBar
         lowBroken := true
 
-longReady  = canTrade and not boDay and allowLong  and not (onePerLevel and longUsed)  and close > longLvl  and not (skipBroken and lowBroken)
+longReady  = canTrade and not boDay and allowLong  and not momSkipLong and not (onePerLevel and longUsed)  and close > longLvl  and not (skipBroken and lowBroken)
 shortReady = canTrade and not boDay and allowShort and not (onePerLevel and shortUsed) and close < shortLvl and not (skipBroken and highBroken)
 
 // Resting limit orders at the levels = "touch" entries. OCA so only one side fills.
@@ -265,18 +282,21 @@ if flipLongReady
 else
     strategy.cancel("Flip Long")
 
-// Breakout entries (VIX-drop days): stop orders AT the range lines, placed while price is still inside.
+// Breakout entries (VIX-drop days): stop orders boOffset ticks beyond the range lines, placed while
+// price is still inside them.
+boLongLvl    = rangeHigh + boOffset * tick
+boShortLvl   = rangeLow  - boOffset * tick
 boCan        = boDay and canTrade and tradesToday < boMaxTrades
-boLongReady  = boCan and allowLong  and not boLongUsed  and close < rangeHigh
-boShortReady = boCan and allowShort and not boShortUsed and close > rangeLow
+boLongReady  = boCan and allowLong  and not boLongUsed  and close < boLongLvl
+boShortReady = boCan and allowShort and not boShortUsed and close > boShortLvl
 if boLongReady
-    strategy.entry("BO Long", strategy.long, qty = contracts, stop = rangeHigh, oca_name = "porr", oca_type = strategy.oca.cancel)
-    strategy.exit("BO Long Exit", "BO Long", limit = rangeHigh + boTp * tick, stop = rangeHigh - boSl * tick, comment_profit = f_exitTxt("TP", rangeHigh + boTp * tick, rangeHigh, 1, contracts), comment_loss = f_exitTxt("SL", rangeHigh - boSl * tick, rangeHigh, 1, contracts))
+    strategy.entry("BO Long", strategy.long, qty = contracts, stop = boLongLvl, oca_name = "porr", oca_type = strategy.oca.cancel)
+    strategy.exit("BO Long Exit", "BO Long", limit = boLongLvl + boTp * tick, stop = boLongLvl - boSl * tick, comment_profit = f_exitTxt("TP", boLongLvl + boTp * tick, boLongLvl, 1, contracts), comment_loss = f_exitTxt("SL", boLongLvl - boSl * tick, boLongLvl, 1, contracts))
 else
     strategy.cancel("BO Long")
 if boShortReady
-    strategy.entry("BO Short", strategy.short, qty = contracts, stop = rangeLow, oca_name = "porr", oca_type = strategy.oca.cancel)
-    strategy.exit("BO Short Exit", "BO Short", limit = rangeLow - boTp * tick, stop = rangeLow + boSl * tick, comment_profit = f_exitTxt("TP", rangeLow - boTp * tick, rangeLow, -1, contracts), comment_loss = f_exitTxt("SL", rangeLow + boSl * tick, rangeLow, -1, contracts))
+    strategy.entry("BO Short", strategy.short, qty = contracts, stop = boShortLvl, oca_name = "porr", oca_type = strategy.oca.cancel)
+    strategy.exit("BO Short Exit", "BO Short", limit = boShortLvl - boTp * tick, stop = boShortLvl + boSl * tick, comment_profit = f_exitTxt("TP", boShortLvl - boTp * tick, boShortLvl, -1, contracts), comment_loss = f_exitTxt("SL", boShortLvl + boSl * tick, boShortLvl, -1, contracts))
 else
     strategy.cancel("BO Short")
 
@@ -304,8 +324,8 @@ f_sync(0, longReady,      "Long",       "BUY",  "LIMIT", longLvl,   lineTpL, slT
 f_sync(1, shortReady,     "Short",      "SELL", "LIMIT", shortLvl,  lineTpS, slTicks, beTrigger, beOffset, useBE)
 f_sync(2, flipLongReady,  "Flip Long",  "BUY",  "LIMIT", rangeHigh, flipTp,  flipSl,  beTrigger, beOffset, useBE)
 f_sync(3, flipShortReady, "Flip Short", "SELL", "LIMIT", rangeLow,  flipTp,  flipSl,  beTrigger, beOffset, useBE)
-f_sync(4, boLongReady,    "BO Long",    "BUY",  "STOP",  rangeHigh, boTp,    boSl,    boBeTrig,  boBeOff,  boUseBE)
-f_sync(5, boShortReady,   "BO Short",   "SELL", "STOP",  rangeLow,  boTp,    boSl,    boBeTrig,  boBeOff,  boUseBE)
+f_sync(4, boLongReady,    "BO Long",    "BUY",  "STOP",  boLongLvl,  boTp,    boSl,    boBeTrig,  boBeOff,  boUseBE)
+f_sync(5, boShortReady,   "BO Short",   "SELL", "STOP",  boShortLvl, boTp,    boSl,    boBeTrig,  boBeOff,  boUseBE)
 varip bool beAlertSent = false
 if strategy.position_size == 0
     beAlertSent := false
