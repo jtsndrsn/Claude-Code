@@ -4,7 +4,7 @@ Secrets (API keys, passphrase, Gmail App Password) are stored ONLY in Render's e
 never in this repo or in chat.
 
 ## Overview
-TradingView (PORR v2.2 strategy alerts) -> webhook -> bridge on Render -> Webull PAPER account (MNQ futures).
+TradingView (PORR v3.0 strategy alerts) -> webhook -> bridge on Render -> Webull PAPER account (MNQ futures).
 No PC or Claude session needs to be running.
 
 ## Render (bridge host)
@@ -12,7 +12,7 @@ No PC or Claude session needs to be running.
 - Status page: https://claude-code-pl6a.onrender.com/status?key=<STATUS_KEY> (position, orders, today's trades and P&L,
   activity; refreshes every 15 s). Optional env STATUS_KEY protects it; without it the page is public (read-only).
 - Service type: Web Service, plan Starter ($7/mo, 0.5 CPU / 512 MB), region Ohio
-- Repo `jtsndrsn/Claude-Code`, branch `claude/eager-archimedes-jz42ll` (switch to `main` once PR #1 is merged)
+- Repo `jtsndrsn/Claude-Code`, branch `main`
 - Root Directory `porr_bot`; Build `pip install -r requirements.txt`;
   Start `python bridge.py --config config.render.toml`
 - Disk: mount `/var/data`, 1 GB (trades.csv + bridge_state.json)
@@ -20,7 +20,10 @@ No PC or Claude session needs to be running.
 - Auto-Deploy OFF: after a code update, use Manual Deploy outside 08:30-11:00 CT
 - Environment variables:
   - PYTHON_VERSION=3.12.7, DATA_DIR=/var/data, WEBULL_SANDBOX=true
-  - WEBULL_PAPER_ACCOUNT_ID=ERJU7AQIVIN376DVI2L8E1OUBA
+  - WEBULL_PAPER_ACCOUNT_ID = the paper **Futures** account ID (since Nov 2026 it starts `5GJ6L6QG` and ends `VLIR48`;
+    the old `ERJU7...` ID is invalid). Webull can change it; to check, in the Render Shell (already in porr_bot):
+    `WB_KEY=$WEBULL_PAPER_APP_KEY WB_SECRET=$WEBULL_PAPER_APP_SECRET python wb_check.py`
+  - optional STATUS_KEY: protects the /status page (open `/status?key=...`)
   - PORR_SYMBOL=MNQZ6 (roll each quarter: H/M/U/Z), PORR_MAX_CONTRACTS=1
   - secrets: WEBULL_PAPER_APP_KEY, WEBULL_PAPER_APP_SECRET, BRIDGE_PASSPHRASE
   - email: EMAIL_TO, EMAIL_FROM (the user's Gmail), SMTP_PASSWORD (Gmail App Password, 16 letters, no spaces)
@@ -28,7 +31,7 @@ No PC or Claude session needs to be running.
 
 ## TradingView
 - Chart: MNQ, 1-minute timeframe (not 1 second)
-- Script: strategies/porr.pine v2.2. Inputs "Webhook bridge": Send order alerts ON, passphrase = BRIDGE_PASSPHRASE
+- Script: strategies/porr.pine v3.0. Inputs "Webhook bridge": Send order alerts ON, passphrase = BRIDGE_PASSPHRASE
 - Properties: On realtime bar tick ON
 - One alert: Condition PORR, "alert() function calls only", Webhook URL above, open-ended
 - Re-create the alert after any script or input change
@@ -47,3 +50,11 @@ No PC or Claude session needs to be running.
 ## Going live later
 Set WEBULL_SANDBOX=false, add WEBULL_APP_KEY / WEBULL_APP_SECRET / WEBULL_ACCOUNT_ID in Render,
 start with PORR_MAX_CONTRACTS=1.
+
+## Troubleshooting
+- Env var edits only apply with **Save & Deploy**; Manual Deploy alone drops unsaved edits.
+- TradingView "webhook failed" + Render log `rejected alert (bad passphrase)` (403): passphrase in Render and in the
+  script input differ. Save & Deploy in Render, update the input, then re-create the alert.
+- 400 / `ACCOUNT_ACCESS_DENIED` in the Render log: wrong WEBULL_PAPER_ACCOUNT_ID; run wb_check (above) and update it.
+- Alerts after 11:00 CT return 200 but are ignored (trade window closed).
+- Paper orders do not show in the regular Webull app; use the /status page and the emails.

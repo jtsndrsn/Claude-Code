@@ -1,12 +1,13 @@
+import os
 """Full PORR system simulator for the big search: fade days + VIX-drop breakout days, with new
 options (time stop, trailing stop after breakeven, partial take-profit, entry filters, day filters).
 Per-trade result = ticks per contract (weighted over partial legs) and a size multiplier."""
 import sys, json, csv, bisect
 from datetime import date, datetime
 import numpy as np
-sys.path.insert(0, "/tmp/claude-0/-home-user-Claude-Code/5e83bea1-15df-515d-8b9d-19cf28b4057a/scratchpad/bt")
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 from fastsim import load_days, _first, sim_day_breakout, TICK
-S = "/tmp/claude-0/-home-user-Claude-Code/5e83bea1-15df-515d-8b9d-19cf28b4057a/scratchpad"
+S = os.environ.get("PORR_DATA", os.path.join(os.path.dirname(os.path.abspath(__file__)), "data"))
 R = "/home/user/Claude-Code/research"
 D = F = DF = VCH = RSI = None
 QTY, TUSD, COMM_SIDE = 10, 0.5, 0.74
@@ -25,6 +26,9 @@ def _rsi(c, n=14):
 def init():
     global D, F, DF, VCH, RSI
     D = load_days(); F = json.load(open(S + "/db/features.json"))
+    import os
+    if os.environ.get("PORR_OLD", "1") == "1" and os.path.exists(S + "/db2/cache_1s.npz"):   # Nov 2021 - Jul 2023
+        D.update(load_days(S + "/db2/cache_1s.npz")); F.update(json.load(open(S + "/db2/features.json")))
     vix = {}
     for r in csv.DictReader(open(S + "/ext/vix.csv")):
         vix[datetime.strptime(r["DATE"], "%m/%d/%Y").date()] = float(r["CLOSE"])
@@ -40,6 +44,14 @@ def init():
             try: g[k] = float(r[k])
             except (ValueError, KeyError): g[k] = None
         g["dow"] = r["dow"]; DF[r["date"]] = g
+    import os
+    only = os.environ.get("PORR_ONLY")             # "old" = Nov 2021 - Jul 2023 only, "new" = 2025-26 only
+    if only == "old": D = {d: v for d, v in D.items() if d < "2024"}
+    elif only == "new": D = {d: v for d, v in D.items() if d > "2024"}
+    if os.path.exists(S + "/db2/mom.json"):
+        for d, m in json.load(open(S + "/db2/mom.json")).items():
+            if d in D and d not in DF:
+                DF[d] = {"d_macd_hist": m["d_macd_hist"], "d_di_trend": m["d_di_trend"], "dow": None}
     RSI = {}
     for d, day in D.items():                       # 1-minute RSI(14) from 1-second closes
         t = day["t"]; c = day["P"].reshape(-1, 4)[:, 3]
@@ -86,6 +98,10 @@ def fade_day(d, p):
     t = day["t"]; m = (t >= p["rs"]) & (t < p["re"])
     if not m.any(): return []
     hi, lo = float(day["h"][m].max()), float(day["l"][m].min())
+    if p.get("pscale"):            # tick settings scale with the price level (reference price p["pscale"])
+        f = hi / p["pscale"]; p = dict(p)
+        for k in ("sl", "tp", "ttp", "bt", "bo", "delay"):
+            if p.get(k): p[k] = max(1, round(p[k] * f))
     if p.get("rmin") and (hi - lo) / TICK < p["rmin"]: return []
     if p.get("rmax") and (hi - lo) / TICK > p["rmax"]: return []
     i = int(np.searchsorted(T, p["ts"])); end = int(np.searchsorted(T, p["te"]))
@@ -102,6 +118,7 @@ def fade_day(d, p):
         for side, arm_m, fill_m, lvl in ((1, above_L, fillL, L), (-1, below_S, fillS, Sv)):
             if broken[side] or (p["onep"] and used[side]): continue
             if p.get("side") and p["side"] != side: continue
+            if p.get("tfilter") and trend != 0 and side * trend * p["tfilter"] < 0: continue   # 1 = with-trend only, -1 = counter-trend only
             a = _first(arm_m, i)
             if p["skip"]:
                 b = _first(fill_m, i)
@@ -181,11 +198,13 @@ def run(p):
     """p: fade params + vix_th + brk (breakout dict) + dayf. Returns per-trade list [(day, ticks, mult, kind, dir)]."""
     trades = []
     bo = dict(BO_DEFAULT, **p.get("brk", {}))
-    bo_cfg = dict(trade_start=p.get("bo_ts", 8 * 3600 + 1800), trade_end=p.get("bo_te", 11 * 3600), **bo)
+    bo_cfg = dict(trade_start=p.get("bo_ts", p.get("re", 8 * 3600 + 1800)), trade_end=p.get("bo_te", p.get("te", 11 * 3600)), **bo)
     vth = p.get("vix_th", 0.9)
     for d in sorted(D):
         if vth is not None and VCH[d][0] < -vth:
-            hi, lo = F[d]["levels"]["PRE90"]
+            day = D[d]; tt = day["t"]; mm = (tt >= p.get("rs", 7 * 3600)) & (tt < p.get("re", 8 * 3600 + 1800))
+            if not mm.any(): continue
+            hi, lo = float(day["h"][mm].max()), float(day["l"][mm].min())
             for x in sim_day_breakout(D[d], hi, lo, bo_cfg):
                 trades.append((d, x[4], p.get("bo_mult", 1.0), "BO-" + x[3], x[0]))
             continue
@@ -195,7 +214,7 @@ def run(p):
 
 
 def stats(trades, qty=QTY):
-    eq = pk = dd = 0.0; gw = gl = 0.0; w = n = 0; y = {"2025": 0.0, "2026": 0.0}
+    eq = pk = dd = 0.0; gw = gl = 0.0; w = n = 0; y = {"2021": 0.0, "2022": 0.0, "2023": 0.0, "2025": 0.0, "2026": 0.0}
     months = {}
     for d, tk, mult, kind, dirn in trades:
         if mult <= 0: continue
@@ -207,6 +226,7 @@ def stats(trades, qty=QTY):
         else: gl -= pnl
     return dict(n=n, net=round(eq), dd=round(dd), win=round(100 * w / n, 1) if n else 0,
                 pf=round(gw / gl, 2) if gl else 99, y25=round(y["2025"]), y26=round(y["2026"]),
+                y21=round(y["2021"]), y22=round(y["2022"]), y23=round(y["2023"]), old=round(y["2021"] + y["2022"] + y["2023"]),
                 lm=sum(1 for v in months.values() if v < 0))
 
 

@@ -107,3 +107,27 @@ skip LONG fades when the prior day's MACD histogram > 0 and +DI > -DI (the same 
   The momentum filter was found on both years and only helped 2025: the least proven part.
 - Growth plan ($5k, 2 MNQ +2 per $1k profit to 20 MNQ, then 2 NQ +1 per $10k to 5 NQ, NQ $2.00/side):
   v3.0 ends at ~$903k (largest drawdown $19.3k), v2.2 at ~$579k ($44.5k).
+
+## 2021-23 data (Nov 2021 - Jul 2023, 452 days) - added Nov 2026
+Databento 1-second MNQ for Nov 2021 - Jul 2023; the Aug 2023 - Dec 2024 gap is treated as no trading.
+`sys2.py` loads both periods (`PORR_ONLY=old|new` restricts to one). 10 MNQ, $0.74/side.
+
+| | 2021-23 | 2025-26 | All 44 months | Max DD |
+|---|---|---|---|---|
+| v2.2 | +$5,465 | +$138,161 | +$143,626 | |
+| v3.0 balanced (kept) | +$4,771 (2022: -$11.8k) | +$206,890 | +$211,661 | $23,760 |
+
+- v3 in 2021-23: fades lost (2022 bear market), VIX-drop breakouts made money in every year and both directions.
+- 40,000-variation search on 2021-23 only: best there was VIX threshold 0.5 (more breakout days), counter-trend-only
+  fades, range 7:30-8:30 or 8:30-8:45, SL 300-400 (~+$120k in 2021-23). Those settings earned only $13k-115k in
+  2025-26 (some negative) - tuned to 2022. Not adopted.
+- v3 VIX threshold sweep (all 44 months): 0.4 +$214.9k DD $15.9k; 0.5 +$213.7k; 0.7 +$224.1k DD $17.6k;
+  0.9 (kept) +$211.7k DD $23.8k. Lower thresholds help 2021-23 a lot, cost 2025-26 some, and results jump between
+  neighbouring values. Option to revisit if NQ enters a long downtrend: 0.5-0.6.
+- Daily EMA50 distance zones (above/below/near, bands 250-1500 ticks, approach side, sticky N-day switching;
+  `g3.py` per-day P&L + `reg*.py`): v3 was flat in every zone in 2022-23 and strong in every zone in 2025-26, so
+  distance from the EMA does not explain the bad period. Zone-switched settings chosen on one period lost to plain v3
+  on the other. Not adopted. Note: TradingView continuous charts without back-adjustment (B-ADJ) shift the
+  price-to-EMA distance by ~70-100 pts for weeks after each roll.
+- More trades per day (repeat fades allowed, max 2/3/4/6): +$160k-174k vs +$211.7k; breakout max 3-4 changes nothing.
+- Decision: keep v3.0 balanced unchanged; don't let 2022 drive the settings.
