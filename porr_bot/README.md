@@ -69,6 +69,7 @@ flatten are handled even if an alert is late or missing (see the top of `bridge.
    strategy: Condition = PORR, **alert() function calls only**; Notifications -> **Webhook URL**
    `http://<server-ip>/`; expiration open-ended.
 5. Every trade is written to `trades.csv` and the daily P&L email goes out after 11:05 CT.
+6. Live status page: `http://<server>/status` (set env `STATUS_KEY` and open `/status?key=<STATUS_KEY>` to keep it private).
 
 ### Hosting the bridge on Render (recommended)
 1. Render -> New -> **Web Service** -> connect GitHub repo `jtsndrsn/Claude-Code`, branch `main`.

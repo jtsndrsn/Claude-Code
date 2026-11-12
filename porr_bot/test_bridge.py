@@ -2,7 +2,7 @@ import os, tempfile, unittest
 from datetime import datetime, time
 from zoneinfo import ZoneInfo
 from broker import PaperBroker
-from bridge import Bridge
+from bridge import Bridge, make_handler, status_html
 
 CT = ZoneInfo("America/Chicago")
 T0 = datetime(2026, 11, 10, 9, 0, tzinfo=CT)
@@ -103,6 +103,33 @@ class BridgeTest(unittest.TestCase):
         b.clock = T0.replace(hour=8, minute=30); place(b)
         b.clock = T0.replace(hour=8, minute=45); b.tick_loop_once()
         self.assertNotIn("PORR bridge: NO ALERTS from TradingView", notes)
+
+    def test_status_page(self):
+        b, log = mk()
+        place(b); b.broker.on_price(b.clock, 1003, gap=False); px(b, 999.75)      # long fills
+        page = status_html(b)
+        self.assertIn("Long", page); self.assertIn("1000", page); self.assertIn("FILLED", page)
+        px(b, 1005.25)                                                             # TP
+        page = status_html(b)
+        self.assertIn("Flat", page); self.assertIn("EXIT Long TP", page); self.assertIn("+$", page)
+
+    def test_status_page_http_and_key(self):
+        import threading, urllib.request, urllib.error
+        from http.server import ThreadingHTTPServer
+        b, _ = mk()
+        srv = ThreadingHTTPServer(("127.0.0.1", 0), make_handler(b))
+        threading.Thread(target=srv.serve_forever, daemon=True).start()
+        url = f"http://127.0.0.1:{srv.server_address[1]}"
+        try:
+            os.environ.pop("STATUS_KEY", None)
+            self.assertIn("PORR bridge", urllib.request.urlopen(url + "/status").read().decode())
+            self.assertIn('"ok": true', urllib.request.urlopen(url + "/").read().decode())
+            os.environ["STATUS_KEY"] = "k1"
+            with self.assertRaises(urllib.error.HTTPError):
+                urllib.request.urlopen(url + "/status")
+            self.assertIn("PORR bridge", urllib.request.urlopen(url + "/status?key=k1").read().decode())
+        finally:
+            os.environ.pop("STATUS_KEY", None); srv.shutdown()
 
 if __name__ == "__main__":
     unittest.main()

@@ -24,14 +24,17 @@ from __future__ import annotations
 
 import argparse
 import csv
+import html
 import json
 import logging
 import os
 import threading
 import time as _time
+from collections import deque
 from dataclasses import dataclass
 from datetime import datetime, time, timedelta
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+from urllib.parse import parse_qs, urlparse
 from zoneinfo import ZoneInfo
 
 from engine import Fill
@@ -70,6 +73,12 @@ class Bridge:
         self.last_alert: datetime | None = None
         self.heartbeat_for = None
         self.silence_warned_for = None
+        self.events: deque = deque(maxlen=300)              # (time, text) for the status page
+        self.mode = "Webull paper"
+        self.symbol = ""
+
+    def _ev(self, text: str) -> None:
+        self.events.append((self.now(), text))
 
     # ------------------------------------------------------------------ state on disk (restart recovery)
     def save(self) -> None:
@@ -141,6 +150,7 @@ class Bridge:
     def handle(self, msg: dict) -> str:
         if not self.passphrase or msg.get("pass") != self.passphrase:
             log.warning("rejected alert (bad passphrase)")
+            self._ev("Rejected an alert: wrong passphrase")
             return "forbidden"
         mid = str(msg.get("id", ""))
         with self.lock:
@@ -156,6 +166,12 @@ class Bridge:
                    self._place(msg) if act == "place" else self._cancel(msg.get("tag")) if act == "cancel" else
                    self._breakeven(msg.get("tag")) if act == "breakeven" else self._flatten_all("EOD"))
             self.save()
+            if act == "place":
+                self._ev(f"Alert: place {msg.get('tag')} {msg.get('side')} {msg.get('type')} @ {msg.get('price')} -> {res}")
+            elif act in ("cancel", "breakeven"):
+                self._ev(f"Alert: {act} {msg.get('tag')} -> {res}")
+            else:
+                self._ev(f"Alert: {act} -> {res}")
             return res
 
     def _place(self, m: dict) -> str:
@@ -191,6 +207,7 @@ class Bridge:
         self.broker.replace_stop(p.sl_id, new_stop)
         p.sl_price, p.be_done = new_stop, True
         log.info("breakeven: stop moved to %s", new_stop)
+        self._ev(f"Breakeven: stop moved to {new_stop}")
         return "moved"
 
     def _flatten_all(self, why: str) -> str:
@@ -203,6 +220,7 @@ class Bridge:
             p.tp_id = p.sl_id = None
             self.broker.place_market("EOD", "SELL" if p.dir > 0 else "BUY", p.qty)
             log.warning("flatten (%s)", why)
+            self._ev(f"Flatten ({why}): closing {p.tag} at market")
         return "flattened"
 
     # ------------------------------------------------------------------ fills (Webull = truth)
@@ -231,6 +249,7 @@ class Bridge:
         sl_id = self.broker.place_stop("SL", exit_side, f.qty, sl_px)
         self.pos = Pos(f.tag, d, f.qty, f.price, tp_id, sl_id, sl_px, intent, f.ts or self.now())
         log.info("filled %s %s @ %s -> TP %s / SL %s ticks", f.tag, f.qty, f.price, tp, sl)
+        self._ev(f"FILLED {f.tag} {f.qty} @ {f.price}: TP {self._r(f.price + d * tp * self.tick)}, SL {sl_px}")
 
     def _on_exit(self, f: Fill) -> None:
         p = self.pos
@@ -239,6 +258,7 @@ class Bridge:
         ticks = (f.price - p.entry) * p.dir / self.tick
         kind = "SL" if f.tag == "SL" else f.tag
         log.info("exit %s %s @ %s (%+.0f ticks)", p.tag, kind, f.price, ticks)
+        self._ev(f"EXIT {p.tag} {kind} @ {f.price} ({ticks:+.0f} ticks)")
         if self.trade_log:
             new = not os.path.exists(self.trade_log)
             with open(self.trade_log, "a", newline="") as fh:
@@ -272,6 +292,65 @@ class Bridge:
                             "and the chart is open/connected. The bridge will still flatten at the window end.")
 
 
+def status_html(b: Bridge, tick_value: float = 0.5, comm_per_side: float = 0.74) -> str:
+    """Read-only status page: position, working orders, today's trades and P&L, recent events."""
+    from report import load_trades, summarize
+    e = html.escape
+    now = b.now()
+    money = lambda v: f'<span class="{"pos" if v >= 0 else "neg"}">{"+" if v >= 0 else "-"}${abs(v):,.2f}</span>'
+    with b.lock:
+        p = b.pos
+        working = [(t, it) for t, (_, it) in b.working.items()]
+        events = [ev for ev in b.events if ev[0].date() == now.date()]
+    if p is None:
+        pos = "<p class='muted'>Flat (no position)</p>"
+    else:
+        tp = b._r(p.entry + p.dir * float(p.intent.get("tp", 0)) * b.tick)
+        pos = (f"<table><tr><th>Trade</th><th>Side</th><th>Qty</th><th>Entry</th><th>Target</th><th>Stop</th></tr>"
+               f"<tr><td>{e(p.tag)}</td><td>{'Long' if p.dir > 0 else 'Short'}</td><td>{p.qty}</td><td>{p.entry}</td>"
+               f"<td>{tp}</td><td>{p.sl_price}{' (breakeven)' if p.be_done else ''}</td></tr></table>"
+               f"<p class='muted'>Entered {p.entry_ts:%H:%M:%S}</p>")
+    if working:
+        rows = "".join(f"<tr><td>{e(str(t))}</td><td>{e(str(it.get('side')))}</td><td>{e(str(it.get('type')))}</td>"
+                       f"<td>{e(str(it.get('price')))}</td><td>{e(str(it.get('qty')))}</td></tr>" for t, it in working)
+        orders = f"<table><tr><th>Order</th><th>Side</th><th>Type</th><th>Price</th><th>Qty</th></tr>{rows}</table>"
+    else:
+        orders = "<p class='muted'>None</p>"
+    s = summarize(load_trades(b.trade_log), now.date(), tick_value, comm_per_side) if b.trade_log else None
+    if s and s["day"]:
+        rows = "".join(f"<tr><td>{str(r['entry_time'])[11:16]}-{str(r['exit_time'])[11:16]}</td><td>{e(r['tag'])}</td>"
+                       f"<td>{e(r['entry'])} &rarr; {e(r['exit'])}</td><td>{e(r['exit_type'])}</td><td>{money(net)}</td></tr>"
+                       for r, net in s["day"])
+        trades = f"<table><tr><th>Time</th><th>Trade</th><th>Entry &rarr; exit</th><th>Exit</th><th>P&amp;L</th></tr>{rows}</table>"
+    else:
+        trades = "<p class='muted'>No closed trades today</p>"
+    pnl = (f"<div class='kpis'><div><small>Today</small>{money(s['today'])}</div><div><small>Week</small>{money(s['week'])}</div>"
+           f"<div><small>Month</small>{money(s['month'])}</div></div>") if s else ""
+    ev = "".join(f"<li><span class='muted'>{t:%H:%M:%S}</span> {e(x)}</li>" for t, x in reversed(events[-60:])) \
+        or "<li class='muted'>Nothing yet today</li>"
+    last = f"{b.last_alert:%H:%M:%S}" if b.last_alert and b.last_alert.date() == now.date() else "none today"
+    return f"""<!doctype html><html lang="en"><head><meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1"><meta http-equiv="refresh" content="15">
+<title>PORR Bridge Status</title><style>
+:root{{--bg:#fff;--fg:#1a1a1a;--mute:#6b6b6b;--line:#e3e3e3;--pos:#137333;--neg:#c5221f;--card:#f6f6f6}}
+@media (prefers-color-scheme: dark){{:root{{--bg:#121212;--fg:#ececec;--mute:#9a9a9a;--line:#2c2c2c;--pos:#5bd17a;--neg:#ff6b61;--card:#1c1c1c}}}}
+body{{background:var(--bg);color:var(--fg);font:15px/1.45 system-ui,-apple-system,Segoe UI,Roboto,sans-serif;margin:0;padding:16px;max-width:760px}}
+h1{{font-size:20px;margin:0 0 4px}} h2{{font-size:15px;margin:22px 0 8px;text-transform:uppercase;letter-spacing:.04em;color:var(--mute)}}
+table{{border-collapse:collapse;width:100%;font-variant-numeric:tabular-nums}} th,td{{text-align:left;padding:6px 8px;border-bottom:1px solid var(--line)}}
+th{{font-weight:600;font-size:13px;color:var(--mute)}} .muted{{color:var(--mute)}} .pos{{color:var(--pos);font-weight:600}} .neg{{color:var(--neg);font-weight:600}}
+.kpis{{display:flex;gap:10px}} .kpis div{{flex:1;background:var(--card);border-radius:8px;padding:10px 12px;font-size:18px}}
+.kpis small{{display:block;font-size:12px;color:var(--mute)}} ul{{list-style:none;padding:0;margin:0}} li{{padding:4px 0;border-bottom:1px solid var(--line)}}
+</style></head><body>
+<h1>PORR bridge</h1>
+<p class="muted">{e(b.mode)}{(" &middot; " + e(b.symbol)) if b.symbol else ""} &middot; {now:%a %b %d, %H:%M:%S} CT &middot; last alert: {last} &middot; refreshes every 15 s</p>
+<h2>P&amp;L (net of commission)</h2>{pnl}
+<h2>Position</h2>{pos}
+<h2>Working orders</h2>{orders}
+<h2>Today's trades</h2>{trades}
+<h2>Today's activity</h2><ul>{ev}</ul>
+</body></html>"""
+
+
 def make_handler(bridge: Bridge):
     class H(BaseHTTPRequestHandler):
         def do_POST(self):
@@ -285,8 +364,18 @@ def make_handler(bridge: Bridge):
             self.send_response(code); self.send_header("Content-Type", "text/plain"); self.end_headers()
             self.wfile.write(res.encode())
 
-        def do_GET(self):                                   # health check
-            p = bridge.pos
+        def do_GET(self):
+            u = urlparse(self.path)
+            if u.path.rstrip("/") == "/status":
+                key = os.environ.get("STATUS_KEY")
+                if key and parse_qs(u.query).get("key", [""])[0] != key:
+                    self.send_response(403); self.send_header("Content-Type", "text/plain"); self.end_headers()
+                    self.wfile.write(b"forbidden"); return
+                body = status_html(bridge).encode()
+                self.send_response(200); self.send_header("Content-Type", "text/html; charset=utf-8")
+                self.send_header("Cache-Control", "no-store"); self.end_headers()
+                self.wfile.write(body); return
+            p = bridge.pos                                  # "/": health check (JSON)
             body = json.dumps({"ok": True, "position": None if p is None else {"tag": p.tag, "dir": p.dir, "entry": p.entry},
                                "working": list(bridge.working)})
             self.send_response(200); self.send_header("Content-Type", "application/json"); self.end_headers()
@@ -337,6 +426,8 @@ def main() -> None:
     broker = WebullBroker(k, s, acct, symbol, sandbox=sandbox, order_events=wb.get("order_events", False))
     bridge = Bridge(broker, pw, cfg.tick, max_qty, trade_log, br.get("tz", "America/Chicago"), cfg.trade_end,
                     state_path=os.path.join(data_dir, "bridge_state.json"), notify=notify)
+    bridge.mode = ("Webull paper" if sandbox else "LIVE ACCOUNT")
+    bridge.symbol = symbol
     bridge.restore()
     port = a.port or int(os.environ.get("PORT", br.get("port", 80)))
     srv = ThreadingHTTPServer((br.get("host", "0.0.0.0"), port), make_handler(bridge))
