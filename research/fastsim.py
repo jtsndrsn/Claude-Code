@@ -191,6 +191,7 @@ def sim_day_breakout(day, hi, lo, cfg):
     P, G, T = day["P"], day["G"], day["T"]
     i = int(np.searchsorted(T, cfg["trade_start"])); end = int(np.searchsorted(T, cfg["trade_end"]))
     if i >= end: return []
+    eend = int(np.searchsorted(T, cfg["entry_end"])) if cfg.get("entry_end") else end
     P = P[:end]; G = G[:end]; T = T[:end]
     off = cfg["offset"] * TICK; sl = cfg["sl"] * TICK; tpx = cfg["tp"] * TICK
     bt = cfg["be_trig"] * TICK if cfg.get("be_trig") else None; bo = cfg.get("be_off", 0) * TICK
@@ -208,14 +209,14 @@ def sim_day_breakout(day, hi, lo, cfg):
                 if a == -1: continue
                 hit = (P >= trig) if side > 0 else (P <= trig)
                 f = _first(hit, a + 1)
-                if f != -1: cand.append((f, side, P[f] if G[f] else trig))
+                if f != -1 and f < eend: cand.append((f, side, P[f] if G[f] else trig))
             else:  # retest
                 beyond = (P >= trig) if side > 0 else (P <= trig)
                 a = _first(beyond, i)
                 if a == -1: continue
                 back = (P <= line - TICK) if side > 0 else (P >= line + TICK)     # limit at the line, 1 tick through
                 f = _first(back, a + 1)
-                if f != -1: cand.append((f, side, line))
+                if f != -1 and f < eend: cand.append((f, side, line))
         if not cand: break
         k, dirn, entry = min(cand)
         used[dirn] = True; n += 1

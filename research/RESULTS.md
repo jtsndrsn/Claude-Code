@@ -107,3 +107,56 @@ skip LONG fades when the prior day's MACD histogram > 0 and +DI > -DI (the same 
   The momentum filter was found on both years and only helped 2025: the least proven part.
 - Growth plan ($5k, 2 MNQ +2 per $1k profit to 20 MNQ, then 2 NQ +1 per $10k to 5 NQ, NQ $2.00/side):
   v3.0 ends at ~$903k (largest drawdown $19.3k), v2.2 at ~$579k ($44.5k).
+
+## 2021-23 data (Nov 2021 - Jul 2023, 452 days) - added Nov 2026
+Databento 1-second MNQ for Nov 2021 - Jul 2023; the Aug 2023 - Dec 2024 gap is treated as no trading.
+`sys2.py` loads both periods (`PORR_ONLY=old|new` restricts to one). 10 MNQ, $0.74/side.
+
+| | 2021-23 | 2025-26 | All 44 months | Max DD |
+|---|---|---|---|---|
+| v2.2 | +$5,465 | +$138,161 | +$143,626 | |
+| v3.0 balanced (kept) | +$4,771 (2022: -$11.8k) | +$206,890 | +$211,661 | $23,760 |
+
+- v3 in 2021-23: fades lost (2022 bear market), VIX-drop breakouts made money in every year and both directions.
+- 40,000-variation search on 2021-23 only: best there was VIX threshold 0.5 (more breakout days), counter-trend-only
+  fades, range 7:30-8:30 or 8:30-8:45, SL 300-400 (~+$120k in 2021-23). Those settings earned only $13k-115k in
+  2025-26 (some negative) - tuned to 2022. Not adopted.
+- v3 VIX threshold sweep (all 44 months): 0.4 +$214.9k DD $15.9k; 0.5 +$213.7k; 0.7 +$224.1k DD $17.6k;
+  0.9 (kept) +$211.7k DD $23.8k. Lower thresholds help 2021-23 a lot, cost 2025-26 some, and results jump between
+  neighbouring values. Option to revisit if NQ enters a long downtrend: 0.5-0.6.
+- Daily EMA50 distance zones (above/below/near, bands 250-1500 ticks, approach side, sticky N-day switching;
+  `g3.py` per-day P&L + `reg*.py`): v3 was flat in every zone in 2022-23 and strong in every zone in 2025-26, so
+  distance from the EMA does not explain the bad period. Zone-switched settings chosen on one period lost to plain v3
+  on the other. Not adopted. Note: TradingView continuous charts without back-adjustment (B-ADJ) shift the
+  price-to-EMA distance by ~70-100 pts for weeks after each roll.
+- More trades per day (repeat fades allowed, max 2/3/4/6): +$160k-174k vs +$211.7k; breakout max 3-4 changes nothing.
+- Decision: keep v3.0 balanced unchanged; don't let 2022 drive the settings.
+
+## Breakout targets and exit time (Nov 2026)
+289 v3 breakout trades on 208 VIX-drop days (`bo_reach.py`). Exits: BE +100 46%, SL 28%, 11:00 close 24%, TP 2%.
+- Price reached +1200 ticks from entry before 11:00 on 7% of trades (2025-26: 11%, 2021-23: 3%); before the
+  300-tick stop level on 5%. Favorable move reached: 200 ticks 70%, 400 45%, 600 30%, 800 20%, 1000 10%.
+- After a BE stop, price came back to the line on 100/132 trades but went on to the original TP on only 10 (5 after
+  a retest, like 2026-11-12).
+- Breakout TP/BE grid (all 44 months): TP 800 +$212.3k DD $21.9k vs TP 1200 +$211.7k DD $23.8k (equivalent);
+  TP 1600 +$217.6k; looser/no BE mainly helps 2021-23 and costs 2025-26 $5-9k. Kept TP 1200 / BE 200->100 for now.
+- Holding open trades past 11:00 (no new entries; `xe` option in `sys2.py`): to 12:00 +$211.9k (TP 800) /
+  +$204.8k (TP 1200); to 13:00 +$205.7k / +$198.6k with DD up $2-9k. Kept the 11:00 flatten. Data ends 13:00.
+
+## Fast stop-outs study (Nov 2026)
+`ff_build.py` writes every v3 trade with pre-entry context (`ff_trades.csv`); `ff_an*.py`, `ff_rules.py` analyse it.
+Fast fail = stopped out without ever reaching half the BE trigger (fades 50 ticks, breakouts 100).
+- 193 of 1,105 trades (17%), -$199k; 149 fades, 44 breakouts; median 266 s to the stop, 25% within 108 s.
+  Most of the quickest filled in the first minute after the 08:30 open.
+- News on the 16 quickest (Webull calendar): Powell Jackson Hole at 09:00 CT (2025-08-22, stopped in 3 s), hot CPI
+  (2022-10-13), tariff crash VIX 45 (2025-04-07), hot PPI (2026-06-11), day after FOMC (2026-03-19); the rest were
+  ordinary open fills (ISM/ADP/PCE days or no news).
+- Skip-rule tests (change in net, 2021-23 / 2025-26): 3+ FVGs into the line +$14.5k / -$27.2k; fill in first 2 min
+  +$19.4k / -$51.2k; 1m bar >150 ticks in last 15 min +$10.8k / -$86.0k; run >260 ticks into the line +$8.4k / -$38.2k;
+  07:30 news shock >3x +$17.5k / -$54.2k; open in top 20% of range +$15.8k / -$34.7k; VIX >25 +$9.6k / -$5.7k.
+  Only two helped both periods, both small: skip fades when VIX >30 (+$1.8k / +$3.7k, 71 trades) and skip breakouts
+  triggering 1-6 min after the open (+$4.2k / +$2.7k, likely noise).
+- No warning sign: FOMC days (0 fast fails, profitable), fills at the 09:00 CT releases (net positive), prior-day
+  high/low sweeps, open vs prior-day range, daily RSI, trend direction.
+- Conclusion: the conditions behind fast losses (open burst, displacement, news shocks) also produce the winners;
+  no filter adopted. Candidate if ever needed: skip fades when VIX >30.
