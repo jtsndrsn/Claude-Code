@@ -149,7 +149,8 @@ def fade_day(d, p):
         if p.get("linetp"): tpk = max(4, round(((hi if dirn > 0 else lo) - entry) * dirn / TICK))
         x, px, kind, beh = _exit(P, G, T, k, dirn, entry, p["sl"] * TICK, tpk * TICK,
                                  p["bt"] * TICK if p.get("bt") else None, p.get("bo", 0) * TICK,
-                                 p.get("trail", 0) * TICK if p.get("trail") else 0, p.get("tstop", 0) * 60, end)
+                                 p.get("trail", 0) * TICK if p.get("trail") else 0, p.get("tstop", 0) * 60,
+                                 int(np.searchsorted(T, p["xe"])) if p.get("xe") else end)
         ticks = (px - entry) * dirn / TICK
         if p.get("ptp"):             # partial: fraction exits at ptp ticks if reached before the main exit
             ptp, frac = p["ptp"]
@@ -198,7 +199,7 @@ def run(p):
     """p: fade params + vix_th + brk (breakout dict) + dayf. Returns per-trade list [(day, ticks, mult, kind, dir)]."""
     trades = []
     bo = dict(BO_DEFAULT, **p.get("brk", {}))
-    bo_cfg = dict(trade_start=p.get("bo_ts", p.get("re", 8 * 3600 + 1800)), trade_end=p.get("bo_te", p.get("te", 11 * 3600)), **bo)
+    bo_cfg = dict(trade_start=p.get("bo_ts", p.get("re", 8 * 3600 + 1800)), trade_end=p.get("xe") or p.get("bo_te", p.get("te", 11 * 3600)), entry_end=p.get("bo_te", p.get("te", 11 * 3600)), **bo)
     vth = p.get("vix_th", 0.9)
     for d in sorted(D):
         if vth is not None and VCH[d][0] < -vth:
