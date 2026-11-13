@@ -57,4 +57,5 @@ start with PORR_MAX_CONTRACTS=1.
   script input differ. Save & Deploy in Render, update the input, then re-create the alert.
 - 400 / `ACCOUNT_ACCESS_DENIED` in the Render log: wrong WEBULL_PAPER_ACCOUNT_ID; run wb_check (above) and update it.
 - Alerts after 11:00 CT return 200 but are ignored (trade window closed).
-- Paper orders do not show in the regular Webull app; use the /status page and the emails.
+- Paper orders and fills do show in the Webull app (paper futures account); the /status page and emails show the bridge's view.
+- Contract size: the bridge trades min(alert qty, PORR_MAX_CONTRACTS). Change PORR_MAX_CONTRACTS in Render, then Save & Deploy outside 08:30-11:00 CT.

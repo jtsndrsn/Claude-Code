@@ -160,3 +160,20 @@ Fast fail = stopped out without ever reaching half the BE trigger (fades 50 tick
   high/low sweeps, open vs prior-day range, daily RSI, trend direction.
 - Conclusion: the conditions behind fast losses (open burst, displacement, news shocks) also produce the winners;
   no filter adopted. Candidate if ever needed: skip fades when VIX >30.
+
+## Open-timing context (Nov 2026)
+**First 5 minutes after the open (08:30-08:35)** (`open5.py`, all 44 months, v3 trades):
+- Range line broken in 08:30-08:35 on 708 of 907 days. Fades filled on that opening break (402 trades, half of all
+  fades): avg $53, -$20.2k in 2021-23, +$41.6k in 2025-26. Fades on days with no line break in the first 5 min:
+  avg $317 (154 trades). Skipping the opening-break fades would cost 2025-26 more than it saves.
+- Breakouts whose open also took out the overnight high/low in the trade direction: avg $533, positive both periods
+  (77 trades). Breakouts filled 08:30-08:35 without that: avg -$20, 27% fast fails (85 trades; skip rule
+  +$2.6k / -$0.8k). Both lines broken within 5 min: 16 breakouts, -$9.9k (too few).
+
+**New range high/low in the last 5 minutes of the range (08:25-08:30)** (`late5.py`):
+- Late high 119 days, late low 160. The same line breaks first after the open 91% / 84% of the time, but the
+  08:30-09:00 move continues only 55% / 46%: no heavy-trend signal.
+- Fades into the line price just pushed into: 149 trades, win 73%, fast fails 17%, avg $153 (no worse than normal).
+  Breakouts with the late move avg $313 (68); against it (reversal through the other line) avg $541 (35, positive
+  both periods, small sample).
+- Conclusion for both: no filter adopted.
