@@ -1,0 +1,157 @@
+//@version=6
+// QuadRotation MTF Composite
+// Same stochastic math and settings as the user's QuadRotation indicator, calculated on up to
+// six timeframes and averaged into one set of lines:
+//   green = average of Stoch 1 across checked timeframes
+//   red   = average of Stoch 4 across checked timeframes
+//   white = average of the weighted Stochastic Average across checked timeframes
+// Background turns red/green when the chosen line is overbought/oversold on enough timeframes.
+// Lower timeframes than the chart (e.g. 30S on a 1-minute chart) use the last sub-bar's value,
+// so put this on the lowest timeframe you include (30S chart if 30S is checked) for exact values.
+indicator("QuadRotation MTF Composite", shorttitle="Quad MTF", overlay=false)
+
+// 1) INPUTS
+g_tf = "Timeframes (check to include)"
+use1 = input.bool(true, "", group=g_tf, inline="1")
+tf1  = input.timeframe("30S", "TF 1", group=g_tf, inline="1")
+use2 = input.bool(true, "", group=g_tf, inline="2")
+tf2  = input.timeframe("1", "TF 2", group=g_tf, inline="2")
+use3 = input.bool(true, "", group=g_tf, inline="3")
+tf3  = input.timeframe("5", "TF 3", group=g_tf, inline="3")
+use4 = input.bool(true, "", group=g_tf, inline="4")
+tf4  = input.timeframe("15", "TF 4", group=g_tf, inline="4")
+use5 = input.bool(true, "", group=g_tf, inline="5")
+tf5  = input.timeframe("240", "TF 5", group=g_tf, inline="5")
+use6 = input.bool(true, "", group=g_tf, inline="6")
+tf6  = input.timeframe("1D", "TF 6", group=g_tf, inline="6")
+confirmedOnly = input.bool(false, "Higher timeframes: confirmed bars only (no repaint)", group=g_tf,
+     tooltip="Off: higher timeframes show their live, still-forming bar (same as watching that chart). On: they only update when their bar closes, so history matches what you'd have seen live.")
+
+g_al = "Alignment background"
+alignSrc = input.string("Average (white)", "Line to check", options=["Average (white)", "Stoch 1 (green)", "Stoch 4 (red)"], group=g_al)
+alignMin = input.int(0, "Min # of timeframes in zone (0 = all checked)", minval=0, maxval=6, group=g_al)
+ob = input.int(80, "Overbought", minval=51, maxval=99, group=g_al)
+os = input.int(20, "Oversold", minval=1, maxval=49, group=g_al)
+bgOBColour = input.color(color.new(color.red, 70), "Overbought colour", group=g_al, inline="bgc")
+bgOSColour = input.color(color.new(color.green, 70), "Oversold colour", group=g_al, inline="bgc")
+showTable = input.bool(true, "Show per-timeframe table", group=g_al)
+
+g_st = "Stochastic settings (same as QuadRotation)"
+w1 = input.float(0.2, "Stoch 1 Weight", minval=0, maxval=10, group=g_st)
+w2 = input.float(0.6, "Stoch 2 Weight", minval=0, maxval=10, group=g_st)
+w3 = input.float(1.4, "Stoch 3 Weight", minval=0, maxval=10, group=g_st)
+w4 = input.float(1.8, "Stoch 4 Weight", minval=0, maxval=10, group=g_st)
+k1 = input.int(9,  "%K Length (Stoch 1)", group=g_st, inline="s1")
+d1 = input.int(3,  "%D", group=g_st, inline="s1")
+k2 = input.int(14, "%K Length (Stoch 2)", group=g_st, inline="s2")
+d2 = input.int(3,  "%D", group=g_st, inline="s2")
+k3 = input.int(40, "%K Length (Stoch 3)", group=g_st, inline="s3")
+d3 = input.int(4,  "%D", group=g_st, inline="s3")
+k4 = input.int(60, "%K Length (Stoch 4)", group=g_st, inline="s4")
+d4 = input.int(10, "%D", group=g_st, inline="s4")
+smoothK4 = input.int(1, "Smoothing (Stoch 4)", group=g_st)
+
+
+// 2) QUAD CALC (identical math to QuadRotation)
+quad(int off) =>
+    s1 = ta.sma(ta.stoch(close, high, low, k1), d1)
+    s2 = ta.sma(ta.stoch(close, high, low, k2), d2)
+    s3 = ta.sma(ta.stoch(close, high, low, k3), d3)
+    s4 = ta.sma(ta.sma(ta.stoch(close, high, low, k4), smoothK4), d4)
+    av = ((s1 - 50) * w1 + (s2 - 50) * w2 + (s3 - 50) * w3 + (s4 - 50) * w4) / 4 + 50
+    [s1[off], s4[off], av[off]]
+
+// Offset 1 + lookahead_on = last closed higher-TF bar (no repaint)
+offFor(string tf) =>
+    confirmedOnly and timeframe.in_seconds(tf) > timeframe.in_seconds() ? 1 : 0
+
+// Unchecked timeframes request the chart timeframe so they never error; they're ignored below
+t1 = use1 ? tf1 : timeframe.period
+t2 = use2 ? tf2 : timeframe.period
+t3 = use3 ? tf3 : timeframe.period
+t4 = use4 ? tf4 : timeframe.period
+t5 = use5 ? tf5 : timeframe.period
+t6 = use6 ? tf6 : timeframe.period
+o1 = offFor(t1)
+o2 = offFor(t2)
+o3 = offFor(t3)
+o4 = offFor(t4)
+o5 = offFor(t5)
+o6 = offFor(t6)
+
+[g1, r1, a1] = request.security(syminfo.tickerid, t1, quad(o1), lookahead = o1 == 1 ? barmerge.lookahead_on : barmerge.lookahead_off)
+[g2, r2, a2] = request.security(syminfo.tickerid, t2, quad(o2), lookahead = o2 == 1 ? barmerge.lookahead_on : barmerge.lookahead_off)
+[g3, r3, a3] = request.security(syminfo.tickerid, t3, quad(o3), lookahead = o3 == 1 ? barmerge.lookahead_on : barmerge.lookahead_off)
+[g4, r4, a4] = request.security(syminfo.tickerid, t4, quad(o4), lookahead = o4 == 1 ? barmerge.lookahead_on : barmerge.lookahead_off)
+[g5, r5, a5] = request.security(syminfo.tickerid, t5, quad(o5), lookahead = o5 == 1 ? barmerge.lookahead_on : barmerge.lookahead_off)
+[g6, r6, a6] = request.security(syminfo.tickerid, t6, quad(o6), lookahead = o6 == 1 ? barmerge.lookahead_on : barmerge.lookahead_off)
+
+
+// 3) COMBINE
+uses   = array.from(use1, use2, use3, use4, use5, use6)
+tfs    = array.from(tf1, tf2, tf3, tf4, tf5, tf6)
+greens = array.from(g1, g2, g3, g4, g5, g6)
+reds   = array.from(r1, r2, r3, r4, r5, r6)
+avgs   = array.from(a1, a2, a3, a4, a5, a6)
+
+pickLine(float g, float r, float a) =>
+    alignSrc == "Stoch 1 (green)" ? g : alignSrc == "Stoch 4 (red)" ? r : a
+
+float sumG = 0.0
+float sumR = 0.0
+float sumA = 0.0
+int n = 0
+int nOB = 0
+int nOS = 0
+for i = 0 to 5
+    float g = array.get(greens, i)
+    float r = array.get(reds, i)
+    float a = array.get(avgs, i)
+    if array.get(uses, i) and not na(g) and not na(r) and not na(a)
+        sumG += g
+        sumR += r
+        sumA += a
+        n += 1
+        float v = pickLine(g, r, a)
+        nOB += v >= ob ? 1 : 0
+        nOS += v <= os ? 1 : 0
+
+compG = n > 0 ? sumG / n : na
+compR = n > 0 ? sumR / n : na
+compA = n > 0 ? sumA / n : na
+
+need = alignMin == 0 ? n : math.min(alignMin, n)
+allOB = n > 0 and nOB >= need
+allOS = n > 0 and nOS >= need
+
+
+// 4) PLOTS
+hOS = hline(os, "Oversold", color=color.red, linestyle=hline.style_dashed)
+hOB = hline(ob, "Overbought", color=color.red, linestyle=hline.style_dashed)
+hline(95, "Extreme Overbought", color=color.white, linestyle=hline.style_dashed)
+hline(5,  "Extreme Oversold",   color=color.white, linestyle=hline.style_dashed)
+hline(50, "Midline", color=color.gray, linestyle=hline.style_dotted, display=display.none)
+fill(hOS, hOB, color=color.new(color.navy, 90), title="20-80 Zone Fill")
+
+plot(compG, "Composite Stoch 1", color=color.rgb(76, 175, 80), linewidth=1)
+plot(compR, "Composite Stoch 4", color=color.rgb(242, 54, 69), linewidth=2)
+plot(compA, "Composite Average", color=color.white, linewidth=2)
+
+bgcolor(allOB ? bgOBColour : allOS ? bgOSColour : na, title="Alignment background")
+
+alertcondition(allOB and not allOB[1], "MTF Overbought aligned", "Quad MTF: timeframes aligned overbought")
+alertcondition(allOS and not allOS[1], "MTF Oversold aligned", "Quad MTF: timeframes aligned oversold")
+
+
+// 5) TABLE: chosen line's value per checked timeframe
+var table tbl = table.new(position.top_right, 2, 7, bgcolor=color.new(color.black, 30))
+if showTable and barstate.islast
+    table.clear(tbl, 0, 0, 1, 6)
+    int row = 0
+    for i = 0 to 5
+        if array.get(uses, i)
+            float v = pickLine(array.get(greens, i), array.get(reds, i), array.get(avgs, i))
+            color c = na(v) ? color.gray : v >= ob ? color.red : v <= os ? color.lime : color.white
+            table.cell(tbl, 0, row, array.get(tfs, i), text_color=color.gray, text_size=size.small)
+            table.cell(tbl, 1, row, na(v) ? "-" : str.tostring(v, "#"), text_color=c, text_size=size.small)
+            row += 1
