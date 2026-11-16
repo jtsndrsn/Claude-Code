@@ -1,5 +1,7 @@
 //@version=6
-// Pre-Open Range Reversal  -  Version 3.1
+// Pre-Open Range Reversal  -  Version 3.2
+// v3.2: chart visuals only: TradingView-style position box (target zone / stop zone, the stop zone
+//       follows the breakeven move), and a Colors group to set every line and box color.
 // v3.1: chart visuals only (no trading change): developing range lines for the last 5 minutes of
 //       the range window, and lines + price tags for working orders (entry limits/stops, TP, SL).
 // v3.0 ("v3 balanced", from an ~80,000-variation search on 1-second data, Feb 2025 - Nov 2026):
@@ -39,7 +41,7 @@ strategy("Pre-Open Range Reversal", shorttitle = "PORR", overlay = true,
      use_bar_magnifier = true,
      // Stats loop looks back over each trade's bars.
      max_bars_back = 2000,
-     max_lines_count = 500, max_labels_count = 500)
+     max_lines_count = 500, max_labels_count = 500, max_boxes_count = 500)
 
 // ---------- Inputs ----------
 grpS = "Sessions"
@@ -104,7 +106,19 @@ showMid     = input.bool(true, "Show mid-range line (dashed)", group = grpV)
 showRngLbl  = input.bool(true, "Show range size label", group = grpV)
 preOpenMin  = input.int(5, "Show developing range lines (minutes before range end)", minval = 0, maxval = 240, group = grpV, tooltip = "The high/low lines appear this many minutes before the range window ends and move with any new high or low until it closes. 0 = only after the range is final.")
 showOrders  = input.bool(true, "Show working orders (entry, TP, SL lines)", group = grpV, tooltip = "Dotted lines for resting entry orders (fade limits, flip limits, breakout stops) and, while in a trade, dashed take-profit and stop-loss lines (the stop line moves when breakeven triggers). Price tags sit at the right edge.")
+showPosBox  = input.bool(true, "Show position box (entry / target / stop)", group = grpV, tooltip = "Like TradingView's Long/Short Position tool: a target zone from the entry to the take profit and a stop zone from the entry to the stop. When breakeven triggers, the stop zone moves to the new stop and changes to the breakeven color.")
 showStats   = input.bool(true, "Show stats table", group = grpV)
+grpC = "Colors"
+colHigh    = input.color(color.new(color.red, 40),     "Range high line",          group = grpC)
+colLow     = input.color(color.new(color.green, 40),   "Range low line",           group = grpC)
+colMid     = input.color(color.new(color.gray, 30),    "Mid-range line",           group = grpC)
+colBuyLmt  = input.color(color.new(color.green, 0),    "Buy limit (resting)",      group = grpC)
+colSellLmt = input.color(color.new(color.red, 0),      "Sell limit (resting)",     group = grpC)
+colBuyStp  = input.color(color.new(color.teal, 0),     "Buy stop (breakout)",      group = grpC)
+colSellStp = input.color(color.new(color.orange, 0),   "Sell stop (breakout)",     group = grpC)
+colTpBox   = input.color(color.new(color.green, 80),   "Position: target zone",    group = grpC)
+colSlBox   = input.color(color.new(color.red, 80),     "Position: stop zone",      group = grpC)
+colBeBox   = input.color(color.new(color.blue, 80),    "Position: stop zone after breakeven", group = grpC)
 showPnlMark = input.bool(true, "Show P&L on exit marks", group = grpV, tooltip = "Adds the trade's net P&L (after commission) to the TP / SL / EOD text on the chart's exit marks, e.g. \"TP +$198.60\". Uses the $0.74-per-contract-per-side commission set in this script; slippage is not included.")
 statsPosStr = input.string("Top right", "Stats table position", options = ["Top right", "Top left", "Bottom right", "Bottom left"], group = grpV)
 
@@ -407,8 +421,8 @@ showLine = showLevels and rangeDone and inTrade
 // Developing range: the last preOpenMin minutes of the range window, moving with new highs/lows.
 rangeEndMs = timestamp(tz, year(time, tz), month(time, tz), dayofmonth(time, tz), int(str.tonumber(str.substring(rangeSess, 5, 7))), int(str.tonumber(str.substring(rangeSess, 7, 9))))
 showPre  = showLevels and preOpenMin > 0 and inRange and time_close > rangeEndMs - preOpenMin * 60000
-plot(showLine or showPre ? rangeHigh : na, "Range High", color.red, 2, plot.style_linebr)
-plot(showLine or showPre ? rangeLow  : na, "Range Low", color.green, 2, plot.style_linebr)
+plot(showLine or showPre ? rangeHigh : na, "Range High", colHigh, 2, plot.style_linebr)
+plot(showLine or showPre ? rangeLow  : na, "Range Low", colLow, 2, plot.style_linebr)
 
 // Dashed grey mid-range line and a range-size label above the top line, both following the
 // current bar to the right while the trade window is open (one of each per day).
@@ -417,7 +431,7 @@ var label rngLbl  = na
 if showLine and not showLine[1]
     rangeTicks = (rangeHigh - rangeLow) / tick
     if showMid
-        midLine := line.new(bar_index, (rangeHigh + rangeLow) / 2, bar_index, (rangeHigh + rangeLow) / 2, color = color.gray, style = line.style_dashed, width = 1)
+        midLine := line.new(bar_index, (rangeHigh + rangeLow) / 2, bar_index, (rangeHigh + rangeLow) / 2, color = colMid, style = line.style_dashed, width = 1)
     if showRngLbl
         rngLbl := label.new(bar_index, rangeHigh, "Range " + str.tostring(rangeHigh - rangeLow, format.mintick) + " pts (" + str.tostring(rangeTicks, "#") + " ticks)", style = label.style_label_lower_left, color = color.new(color.black, 100), textcolor = color.red, size = size.small)
 if showLine
@@ -441,12 +455,39 @@ pxBoLong   = showOrders and boLongReady ? boLongLvl : na
 pxBoShort  = showOrders and boShortReady ? boShortLvl : na
 pxTp       = showOrders ? posTp : na
 pxSl       = showOrders ? posSl : na
-plot(pxLongLmt,  "Buy limit",   color.green,   1, plot.style_linebr, linestyle = plot.linestyle_dotted)
-plot(pxShortLmt, "Sell limit",  color.red,     1, plot.style_linebr, linestyle = plot.linestyle_dotted)
-plot(pxBoLong,   "Buy stop",    color.teal,    1, plot.style_linebr, linestyle = plot.linestyle_dotted)
-plot(pxBoShort,  "Sell stop",   color.orange,  1, plot.style_linebr, linestyle = plot.linestyle_dotted)
-plot(pxTp,       "Take profit", color.lime,    2, plot.style_linebr, linestyle = plot.linestyle_dashed)
-plot(pxSl,       "Stop loss",   color.fuchsia, 2, plot.style_linebr, linestyle = plot.linestyle_dashed)
+plot(pxLongLmt,  "Buy limit",  colBuyLmt,  1, plot.style_linebr, linestyle = plot.linestyle_dotted)
+plot(pxShortLmt, "Sell limit", colSellLmt, 1, plot.style_linebr, linestyle = plot.linestyle_dotted)
+plot(pxBoLong,   "Buy stop",   colBuyStp,  1, plot.style_linebr, linestyle = plot.linestyle_dotted)
+plot(pxBoShort,  "Sell stop",  colSellStp, 1, plot.style_linebr, linestyle = plot.linestyle_dotted)
+
+// Position box: target zone (entry -> TP) and stop zone (entry -> current stop), from the entry bar
+// to the current bar. Boxes are redrawn in place, so a breakeven move never draws a slanted line.
+var box tpBox = na
+var box slBox = na
+var int boxEntryBar = na
+inPos = strategy.position_size != 0 and not na(posTp) and not na(posSl)
+curEntryBar = strategy.opentrades > 0 ? strategy.opentrades.entry_bar_index(strategy.opentrades - 1) : na
+if not na(tpBox) and (not inPos or curEntryBar != boxEntryBar)
+    box.set_right(tpBox, bar_index)
+    box.set_right(slBox, bar_index)
+    tpBox := na
+    slBox := na
+if showPosBox and inPos
+    stopInProfit = (strategy.position_size > 0 and posSl > entryPx) or (strategy.position_size < 0 and posSl < entryPx)
+    slCol = stopInProfit ? colBeBox : colSlBox
+    if na(tpBox)
+        boxEntryBar := curEntryBar
+        tpBox := box.new(curEntryBar, math.max(entryPx, posTp), bar_index + 1, math.min(entryPx, posTp), border_color = color.new(colTpBox, 0), bgcolor = colTpBox)
+        slBox := box.new(curEntryBar, math.max(entryPx, posSl), bar_index + 1, math.min(entryPx, posSl), border_color = color.new(slCol, 0), bgcolor = slCol)
+    else
+        box.set_right(tpBox, bar_index + 1)
+        box.set_top(tpBox, math.max(entryPx, posTp))
+        box.set_bottom(tpBox, math.min(entryPx, posTp))
+        box.set_right(slBox, bar_index + 1)
+        box.set_top(slBox, math.max(entryPx, posSl))
+        box.set_bottom(slBox, math.min(entryPx, posSl))
+        box.set_bgcolor(slBox, slCol)
+        box.set_border_color(slBox, color.new(slCol, 0))
 
 // Price tags at the right edge for whatever is working now (removed when the order is gone).
 f_tag(label lb, float px, string txt, color c) =>
@@ -468,12 +509,12 @@ var label lbBoL   = na
 var label lbBoS   = na
 var label lbTp    = na
 var label lbSl    = na
-lbLong  := f_tag(lbLong,  pxLongLmt,  "Buy limit",  color.green)
-lbShort := f_tag(lbShort, pxShortLmt, "Sell limit", color.red)
-lbBoL   := f_tag(lbBoL,   pxBoLong,   "Buy stop",   color.teal)
-lbBoS   := f_tag(lbBoS,   pxBoShort,  "Sell stop",  color.orange)
-lbTp    := f_tag(lbTp,    pxTp,       "TP",         color.green)
-lbSl    := f_tag(lbSl,    pxSl,       "SL",         color.fuchsia)
+lbLong  := f_tag(lbLong,  pxLongLmt,  "Buy limit",  color.new(colBuyLmt, 0))
+lbShort := f_tag(lbShort, pxShortLmt, "Sell limit", color.new(colSellLmt, 0))
+lbBoL   := f_tag(lbBoL,   pxBoLong,   "Buy stop",   color.new(colBuyStp, 0))
+lbBoS   := f_tag(lbBoS,   pxBoShort,  "Sell stop",  color.new(colSellStp, 0))
+lbTp    := f_tag(lbTp,    pxTp,       "TP",         color.new(colTpBox, 0))
+lbSl    := f_tag(lbSl,    pxSl,       "SL",         color.new(colSlBox, 0))
 plot(showTrend ? htfEma : na, "Trend EMA", trendUp ? color.teal : color.orange, 2)
 
 // ---------- End of day ----------
