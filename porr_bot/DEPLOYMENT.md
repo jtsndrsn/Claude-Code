@@ -4,7 +4,7 @@ Secrets (API keys, passphrase, Gmail App Password) are stored ONLY in Render's e
 never in this repo or in chat.
 
 ## Overview
-TradingView (PORR v3.0 strategy alerts) -> webhook -> bridge on Render -> Webull PAPER account (MNQ futures).
+TradingView (PORR v3.1 strategy alerts) -> webhook -> bridge on Render -> Webull PAPER account (MNQ futures).
 No PC or Claude session needs to be running.
 
 ## Render (bridge host)
@@ -31,7 +31,7 @@ No PC or Claude session needs to be running.
 
 ## TradingView
 - Chart: MNQ, 1-minute timeframe (not 1 second)
-- Script: strategies/porr.pine v3.0. Inputs "Webhook bridge": Send order alerts ON, passphrase = BRIDGE_PASSPHRASE
+- Script: strategies/porr.pine v3.1. Inputs "Webhook bridge": Send order alerts ON, passphrase = BRIDGE_PASSPHRASE
 - Properties: On realtime bar tick ON
 - One alert: Condition PORR, "alert() function calls only", Webhook URL above, open-ended
 - Re-create the alert after any script or input change

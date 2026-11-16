@@ -1,5 +1,7 @@
 //@version=6
-// Pre-Open Range Reversal  -  Version 3.0
+// Pre-Open Range Reversal  -  Version 3.1
+// v3.1: chart visuals only (no trading change): developing range lines for the last 5 minutes of
+//       the range window, and lines + price tags for working orders (entry limits/stops, TP, SL).
 // v3.0 ("v3 balanced", from an ~80,000-variation search on 1-second data, Feb 2025 - Nov 2026):
 //       stop loss 175 (was 100), with-trend TP 1000 (was 750), breakout stops 10 ticks beyond the
 //       lines with TP 1200 (was AT the lines, TP 800), and a daily momentum filter that skips longs
@@ -100,6 +102,8 @@ showLevels = input.bool(true, "Show range lines", group = grpV)
 showRangeBg = input.bool(true, "Shade range window", group = grpV)
 showMid     = input.bool(true, "Show mid-range line (dashed)", group = grpV)
 showRngLbl  = input.bool(true, "Show range size label", group = grpV)
+preOpenMin  = input.int(5, "Show developing range lines (minutes before range end)", minval = 0, maxval = 240, group = grpV, tooltip = "The high/low lines appear this many minutes before the range window ends and move with any new high or low until it closes. 0 = only after the range is final.")
+showOrders  = input.bool(true, "Show working orders (entry, TP, SL lines)", group = grpV, tooltip = "Dotted lines for resting entry orders (fade limits, flip limits, breakout stops) and, while in a trade, dashed take-profit and stop-loss lines (the stop line moves when breakeven triggers). Price tags sit at the right edge.")
 showStats   = input.bool(true, "Show stats table", group = grpV)
 showPnlMark = input.bool(true, "Show P&L on exit marks", group = grpV, tooltip = "Adds the trade's net P&L (after commission) to the TP / SL / EOD text on the chart's exit marks, e.g. \"TP +$198.60\". Uses the $0.74-per-contract-per-side commission set in this script; slippage is not included.")
 statsPosStr = input.string("Top right", "Stats table position", options = ["Top right", "Top left", "Bottom right", "Bottom left"], group = grpV)
@@ -362,6 +366,8 @@ if strategy.position_size != 0
         bestHigh := math.max(bestHigh, high)
         bestLow  := math.min(bestLow, low)
 
+float posTp = na
+float posSl = na
 if strategy.position_size > 0
     tp = useLineTP and not str.startswith(tradeId, "Flip") and not str.startswith(tradeId, "BO") ? rangeHigh : entryPx + nz(tradeTp, tpLongT) * tick
     sl = entryPx - nz(tradeSl, slTicks) * tick
@@ -370,6 +376,8 @@ if strategy.position_size > 0
         if useBridge and barstate.isrealtime and not beAlertSent
             alert('{"pass":"' + bridgePass + '","id":"be-' + str.tostring(time) + '","action":"breakeven","tag":"' + tradeId + '"}', alert.freq_all)
             beAlertSent := true
+    posTp := tp
+    posSl := sl
     strategy.exit(tradeId + " Exit", tradeId, limit = tp, stop = sl, comment_profit = f_exitTxt("TP", tp, entryPx, 1, strategy.position_size), comment_loss = f_exitTxt("SL", sl, entryPx, 1, strategy.position_size))
 else if strategy.position_size < 0
     tp = useLineTP and not str.startswith(tradeId, "Flip") and not str.startswith(tradeId, "BO") ? rangeLow : entryPx - nz(tradeTp, tpShortT) * tick
@@ -379,6 +387,8 @@ else if strategy.position_size < 0
         if useBridge and barstate.isrealtime and not beAlertSent
             alert('{"pass":"' + bridgePass + '","id":"be-' + str.tostring(time) + '","action":"breakeven","tag":"' + tradeId + '"}', alert.freq_all)
             beAlertSent := true
+    posTp := tp
+    posSl := sl
     strategy.exit(tradeId + " Exit", tradeId, limit = tp, stop = sl, comment_profit = f_exitTxt("TP", tp, entryPx, -1, -strategy.position_size), comment_loss = f_exitTxt("SL", sl, entryPx, -1, -strategy.position_size))
 
 // immediately = true: close at THIS bar's close, not the next bar's open (which after an early
@@ -394,8 +404,11 @@ if flatAtEnd and not inTrade and strategy.position_size != 0 and barstate.isconf
 
 // ---------- Visuals ----------
 showLine = showLevels and rangeDone and inTrade
-plot(showLine ? rangeHigh : na, "Range High", color.red, 2, plot.style_linebr)
-plot(showLine ? rangeLow  : na, "Range Low", color.green, 2, plot.style_linebr)
+// Developing range: the last preOpenMin minutes of the range window, moving with new highs/lows.
+rangeEndMs = timestamp(tz, year(time, tz), month(time, tz), dayofmonth(time, tz), int(str.tonumber(str.substring(rangeSess, 5, 7))), int(str.tonumber(str.substring(rangeSess, 7, 9))))
+showPre  = showLevels and preOpenMin > 0 and inRange and time_close > rangeEndMs - preOpenMin * 60000
+plot(showLine or showPre ? rangeHigh : na, "Range High", color.red, 2, plot.style_linebr)
+plot(showLine or showPre ? rangeLow  : na, "Range Low", color.green, 2, plot.style_linebr)
 
 // Dashed grey mid-range line and a range-size label above the top line, both following the
 // current bar to the right while the trade window is open (one of each per day).
@@ -420,6 +433,47 @@ bgcolor(showRangeBg and inRange ? color.new(color.blue, 88) : na, title = "Range
 posLong  = strategy.position_size > 0
 posShort = strategy.position_size < 0
 plot(posLong or posShort ? entryPx : na, "Entry", color.gray, 1, plot.style_linebr)
+
+// Working orders: resting entries, and the open trade's TP / SL.
+pxLongLmt  = showOrders and longReady ? longLvl : showOrders and flipLongReady ? rangeHigh : na
+pxShortLmt = showOrders and shortReady ? shortLvl : showOrders and flipShortReady ? rangeLow : na
+pxBoLong   = showOrders and boLongReady ? boLongLvl : na
+pxBoShort  = showOrders and boShortReady ? boShortLvl : na
+pxTp       = showOrders ? posTp : na
+pxSl       = showOrders ? posSl : na
+plot(pxLongLmt,  "Buy limit",   color.green,   1, plot.style_linebr, linestyle = plot.linestyle_dotted)
+plot(pxShortLmt, "Sell limit",  color.red,     1, plot.style_linebr, linestyle = plot.linestyle_dotted)
+plot(pxBoLong,   "Buy stop",    color.teal,    1, plot.style_linebr, linestyle = plot.linestyle_dotted)
+plot(pxBoShort,  "Sell stop",   color.orange,  1, plot.style_linebr, linestyle = plot.linestyle_dotted)
+plot(pxTp,       "Take profit", color.lime,    2, plot.style_linebr, linestyle = plot.linestyle_dashed)
+plot(pxSl,       "Stop loss",   color.fuchsia, 2, plot.style_linebr, linestyle = plot.linestyle_dashed)
+
+// Price tags at the right edge for whatever is working now (removed when the order is gone).
+f_tag(label lb, float px, string txt, color c) =>
+    label out = lb
+    if na(px)
+        label.delete(lb)
+        out := na
+    else
+        t = txt + " " + str.tostring(px, format.mintick)
+        if na(lb)
+            out := label.new(bar_index + 2, px, t, style = label.style_label_left, color = color.new(c, 20), textcolor = color.white, size = size.small)
+        else
+            label.set_xy(lb, bar_index + 2, px)
+            label.set_text(lb, t)
+    out
+var label lbLong  = na
+var label lbShort = na
+var label lbBoL   = na
+var label lbBoS   = na
+var label lbTp    = na
+var label lbSl    = na
+lbLong  := f_tag(lbLong,  pxLongLmt,  "Buy limit",  color.green)
+lbShort := f_tag(lbShort, pxShortLmt, "Sell limit", color.red)
+lbBoL   := f_tag(lbBoL,   pxBoLong,   "Buy stop",   color.teal)
+lbBoS   := f_tag(lbBoS,   pxBoShort,  "Sell stop",  color.orange)
+lbTp    := f_tag(lbTp,    pxTp,       "TP",         color.green)
+lbSl    := f_tag(lbSl,    pxSl,       "SL",         color.fuchsia)
 plot(showTrend ? htfEma : na, "Trend EMA", trendUp ? color.teal : color.orange, 2)
 
 // ---------- End of day ----------
