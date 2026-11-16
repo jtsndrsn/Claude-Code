@@ -27,3 +27,15 @@ line/mode/trigger x stop/target grid = 3,840 combos.
   maxDD $2.4k; 2025-26 n=158 PF 1.40 +$10.5k maxDD $4.1k (10 MNQ, ~21 months each).
   Stop 60 / target 25: PF 1.25 / 1.36.
 - Caveat: chosen from many combos; about 90 trades a year. Needs forward/paper testing.
+
+## Quad vs PORR v3.0 stop-outs (2026-11-16) — `research/porr_trades.py`, `research/quad_vs_porr.py`
+Rebuilt v3.0 trades with `research/sys2.py` (2025-26 $187k, 2021-23 $3.4k; documented $207k / $4.8k, small
+trend-source differences). Attached all 36 Quad readings (6 TFs x live/conf x s1/s4/avg) at the last closed 30s bar
+before entry, trade-aligned (long = value, short = 100 - value). "Quick SL" = stop hit faster than the median SL
+(fades 5.1 min, breakouts 18.4 min).
+- Correlations are weak: best AUC 0.55-0.60 (fades), 0.36-0.42 (breakouts); 0.5 = no information.
+- Fades: quick stops came slightly more often when the daily/240m Quad sat further in the trade's direction
+  (long fade with daily avg ~50 vs ~44 for non-stops) and when 30s Stoch 1 was less stretched toward the line.
+- Breakouts: quick stops came when 30s/1m Quad was less extended in the breakout direction (~64-68 vs ~72).
+- No filter works in both periods: every skip rule that saved $1-6k in 2021-23 cost $7-41k in 2025-26.
+  Not adopted.
