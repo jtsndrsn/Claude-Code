@@ -1,0 +1,262 @@
+//@version=6
+// QuadRotation MTF Strategy
+// Same calculation and display as the Quad MTF Composite indicator, plus trading rules.
+// Pick any timeframes (checkboxes) and any combination of Stoch 1/2/3/4 and the Average as the signal lines.
+// Signal: every checked line beyond the overbought/oversold line, either on the composite (average across
+// the checked timeframes) or on each checked timeframe. Trades on the first bar the condition becomes true.
+// Default = continuation: long when above overbought, short when below oversold ("Reverse" flips it).
+strategy("QuadRotation MTF Strategy", shorttitle="Quad MTF Strat", overlay=false, pyramiding=0,
+     default_qty_type=strategy.fixed, default_qty_value=10, initial_capital=50000,
+     commission_type=strategy.commission.cash_per_contract, commission_value=0.74)
+
+// 1) INPUTS
+g_tf = "Timeframes (check to include)"
+use1 = input.bool(true,  "", group=g_tf, inline="1")
+tf1  = input.timeframe("",    "TF 1", group=g_tf, inline="1", tooltip="Blank = chart timeframe")
+use2 = input.bool(false, "", group=g_tf, inline="2")
+tf2  = input.timeframe("30S", "TF 2", group=g_tf, inline="2")
+use3 = input.bool(false, "", group=g_tf, inline="3")
+tf3  = input.timeframe("1",   "TF 3", group=g_tf, inline="3")
+use4 = input.bool(false, "", group=g_tf, inline="4")
+tf4  = input.timeframe("5",   "TF 4", group=g_tf, inline="4")
+use5 = input.bool(false, "", group=g_tf, inline="5")
+tf5  = input.timeframe("15",  "TF 5", group=g_tf, inline="5")
+use6 = input.bool(false, "", group=g_tf, inline="6")
+tf6  = input.timeframe("240", "TF 6", group=g_tf, inline="6")
+use7 = input.bool(false, "", group=g_tf, inline="7")
+tf7  = input.timeframe("1D",  "TF 7", group=g_tf, inline="7")
+confirmedOnly = input.bool(true, "Higher timeframes: confirmed bars only (no repaint)", group=g_tf,
+     tooltip="On: higher timeframes update only when their bar closes, so the backtest matches what could be traded live. Off: they use the still-forming bar, which looks better in history than it can be traded.")
+
+g_sig = "Signal"
+useL1 = input.bool(true,  "Stoch 1", group=g_sig, inline="ln1")
+useL2 = input.bool(false, "Stoch 2", group=g_sig, inline="ln1")
+useL3 = input.bool(false, "Stoch 3", group=g_sig, inline="ln1")
+useL4 = input.bool(true,  "Stoch 4", group=g_sig, inline="ln2")
+useLA = input.bool(true,  "Average", group=g_sig, inline="ln2")
+sigMode  = input.string("Composite", "Check lines on", options=["Composite", "Each timeframe"], group=g_sig,
+     tooltip="Composite: the checked lines averaged across the checked timeframes (the lines this pane draws). Each timeframe: the checked lines on every checked timeframe (or the minimum below).")
+alignMin = input.int(0, "Each timeframe: min # of timeframes (0 = all checked)", minval=0, maxval=7, group=g_sig)
+obLvl    = input.int(90, "Overbought line", minval=51, maxval=99, group=g_sig)
+osLvl    = input.int(10, "Oversold line", minval=1, maxval=49, group=g_sig)
+reverseSig = input.bool(false, "Reverse (short above overbought, long below oversold)", group=g_sig)
+
+g_tr = "Trading"
+allowLong    = input.bool(true, "Take longs", group=g_tr)
+allowShort   = input.bool(true, "Take shorts", group=g_tr)
+oncePerLevel = input.bool(true, "Only one trade per level per session", group=g_tr, tooltip="At most one trade from the overbought line and one from the oversold line per session.")
+tpTicks  = input.int(100, "Take profit (ticks)", minval=1, group=g_tr)
+slTicks  = input.int(100, "Stop loss (ticks)", minval=1, group=g_tr)
+useBE    = input.bool(false, "Use breakeven stop", group=g_tr)
+beTrig   = input.int(50, "Breakeven trigger (ticks in profit)", minval=1, group=g_tr)
+beOff    = input.int(3, "Breakeven offset (ticks beyond entry)", group=g_tr, tooltip="Once the trigger is reached, the stop moves to entry + this many ticks. Applies from the next bar.")
+tz        = input.string("America/Chicago", "Time zone", group=g_tr)
+tradeSess = input.session("0830-1300", "Trade window", group=g_tr)
+flatAtEnd = input.bool(true, "Flatten at end of trade window", group=g_tr)
+
+g_dsp = "Display"
+bgOBColour = input.color(color.new(color.red, 70), "Overbought signal colour", group=g_dsp, inline="bgc")
+bgOSColour = input.color(color.new(color.green, 70), "Oversold signal colour", group=g_dsp, inline="bgc")
+showTable  = input.bool(true, "Show per-timeframe table", group=g_dsp)
+
+g_st = "Stochastic settings (same as QuadRotation)"
+w1 = input.float(0.2, "Stoch 1 Weight", minval=0, maxval=10, group=g_st)
+w2 = input.float(0.6, "Stoch 2 Weight", minval=0, maxval=10, group=g_st)
+w3 = input.float(1.4, "Stoch 3 Weight", minval=0, maxval=10, group=g_st)
+w4 = input.float(1.8, "Stoch 4 Weight", minval=0, maxval=10, group=g_st)
+k1 = input.int(9,  "%K Length (Stoch 1)", group=g_st, inline="s1")
+d1 = input.int(3,  "%D", group=g_st, inline="s1")
+k2 = input.int(14, "%K Length (Stoch 2)", group=g_st, inline="s2")
+d2 = input.int(3,  "%D", group=g_st, inline="s2")
+k3 = input.int(40, "%K Length (Stoch 3)", group=g_st, inline="s3")
+d3 = input.int(4,  "%D", group=g_st, inline="s3")
+k4 = input.int(60, "%K Length (Stoch 4)", group=g_st, inline="s4")
+d4 = input.int(10, "%D", group=g_st, inline="s4")
+smoothK4 = input.int(1, "Smoothing (Stoch 4)", group=g_st)
+
+
+// 2) QUAD CALC PER TIMEFRAME (identical math to QuadRotation)
+quad(int off) =>
+    s1 = ta.sma(ta.stoch(close, high, low, k1), d1)
+    s2 = ta.sma(ta.stoch(close, high, low, k2), d2)
+    s3 = ta.sma(ta.stoch(close, high, low, k3), d3)
+    s4 = ta.sma(ta.sma(ta.stoch(close, high, low, k4), smoothK4), d4)
+    av = ((s1 - 50) * w1 + (s2 - 50) * w2 + (s3 - 50) * w3 + (s4 - 50) * w4) / 4 + 50
+    [s1[off], s2[off], s3[off], s4[off], av[off]]
+
+offFor(string tf) =>
+    confirmedOnly and timeframe.in_seconds(tf) > timeframe.in_seconds() ? 1 : 0
+
+lookMode = confirmedOnly ? barmerge.lookahead_on : barmerge.lookahead_off
+t1 = use1 and tf1 != "" ? tf1 : timeframe.period
+t2 = use2 and tf2 != "" ? tf2 : timeframe.period
+t3 = use3 and tf3 != "" ? tf3 : timeframe.period
+t4 = use4 and tf4 != "" ? tf4 : timeframe.period
+t5 = use5 and tf5 != "" ? tf5 : timeframe.period
+t6 = use6 and tf6 != "" ? tf6 : timeframe.period
+t7 = use7 and tf7 != "" ? tf7 : timeframe.period
+
+[a1, b1, c1, e1, v1] = request.security(syminfo.tickerid, t1, quad(offFor(t1)), lookahead = lookMode)
+[a2, b2, c2, e2, v2] = request.security(syminfo.tickerid, t2, quad(offFor(t2)), lookahead = lookMode)
+[a3, b3, c3, e3, v3] = request.security(syminfo.tickerid, t3, quad(offFor(t3)), lookahead = lookMode)
+[a4, b4, c4, e4, v4] = request.security(syminfo.tickerid, t4, quad(offFor(t4)), lookahead = lookMode)
+[a5, b5, c5, e5, v5] = request.security(syminfo.tickerid, t5, quad(offFor(t5)), lookahead = lookMode)
+[a6, b6, c6, e6, v6] = request.security(syminfo.tickerid, t6, quad(offFor(t6)), lookahead = lookMode)
+[a7, b7, c7, e7, v7] = request.security(syminfo.tickerid, t7, quad(offFor(t7)), lookahead = lookMode)
+
+
+// 3) COMBINE
+uses = array.from(use1, use2, use3, use4, use5, use6, use7)
+tfs  = array.from(tf1 == "" ? "Chart" : tf1, tf2, tf3, tf4, tf5, tf6, tf7)
+S1 = array.from(a1, a2, a3, a4, a5, a6, a7)
+S2 = array.from(b1, b2, b3, b4, b5, b6, b7)
+S3 = array.from(c1, c2, c3, c4, c5, c6, c7)
+S4 = array.from(e1, e2, e3, e4, e5, e6, e7)
+SA = array.from(v1, v2, v3, v4, v5, v6, v7)
+
+// true when every checked signal line is beyond the level (above = overbought side)
+linesBeyond(float x1, float x2, float x3, float x4, float xa, bool above, float lvl) =>
+    bool ok = useL1 or useL2 or useL3 or useL4 or useLA
+    if useL1
+        ok := ok and (above ? x1 > lvl : x1 < lvl)
+    if useL2
+        ok := ok and (above ? x2 > lvl : x2 < lvl)
+    if useL3
+        ok := ok and (above ? x3 > lvl : x3 < lvl)
+    if useL4
+        ok := ok and (above ? x4 > lvl : x4 < lvl)
+    if useLA
+        ok := ok and (above ? xa > lvl : xa < lvl)
+    ok
+
+float sum1 = 0.0
+float sum2 = 0.0
+float sum3 = 0.0
+float sum4 = 0.0
+float sumA = 0.0
+int n = 0
+int nOB = 0
+int nOS = 0
+for i = 0 to 6
+    x1 = array.get(S1, i)
+    x2 = array.get(S2, i)
+    x3 = array.get(S3, i)
+    x4 = array.get(S4, i)
+    xa = array.get(SA, i)
+    if array.get(uses, i) and not na(x1) and not na(x2) and not na(x3) and not na(x4) and not na(xa)
+        sum1 += x1
+        sum2 += x2
+        sum3 += x3
+        sum4 += x4
+        sumA += xa
+        n += 1
+        nOB += linesBeyond(x1, x2, x3, x4, xa, true, obLvl) ? 1 : 0
+        nOS += linesBeyond(x1, x2, x3, x4, xa, false, osLvl) ? 1 : 0
+
+comp1 = n > 0 ? sum1 / n : na
+comp2 = n > 0 ? sum2 / n : na
+comp3 = n > 0 ? sum3 / n : na
+comp4 = n > 0 ? sum4 / n : na
+compA = n > 0 ? sumA / n : na
+
+need = alignMin == 0 ? n : math.min(alignMin, n)
+bool atOB = false
+bool atOS = false
+if n > 0
+    if sigMode == "Composite"
+        atOB := linesBeyond(comp1, comp2, comp3, comp4, compA, true, obLvl)
+        atOS := linesBeyond(comp1, comp2, comp3, comp4, compA, false, osLvl)
+    else
+        atOB := nOB >= need
+        atOS := nOS >= need
+
+obCross = atOB and not atOB[1]
+osCross = atOS and not atOS[1]
+longSig  = reverseSig ? osCross : obCross
+shortSig = reverseSig ? obCross : osCross
+
+
+// 4) SESSION STATE
+inSess    = not na(time(timeframe.period, tradeSess, tz))
+sessStart = inSess and not inSess[1]
+sessEnd   = not inSess and inSess[1]
+
+var bool obUsed = false
+var bool osUsed = false
+var bool beHit  = false
+if sessStart
+    obUsed := false
+    osUsed := false
+
+
+// 5) ENTRIES (signal on bar close -> market fill at next bar open)
+flat = strategy.position_size == 0
+longLvlUsed  = reverseSig ? osUsed : obUsed
+shortLvlUsed = reverseSig ? obUsed : osUsed
+if inSess and flat and longSig and allowLong and not (oncePerLevel and longLvlUsed)
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long exit", "Long", profit=tpTicks, loss=slTicks)
+    if reverseSig
+        osUsed := true
+    else
+        obUsed := true
+    beHit := false
+else if inSess and flat and shortSig and allowShort and not (oncePerLevel and shortLvlUsed)
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short exit", "Short", profit=tpTicks, loss=slTicks)
+    if reverseSig
+        obUsed := true
+    else
+        osUsed := true
+    beHit := false
+
+
+// 6) BREAKEVEN
+ep = strategy.position_avg_price
+mt = syminfo.mintick
+if useBE and not beHit
+    if strategy.position_size > 0 and high - ep >= beTrig * mt
+        beHit := true
+        strategy.exit("Long exit", "Long", profit=tpTicks, stop=ep + beOff * mt)
+    else if strategy.position_size < 0 and ep - low >= beTrig * mt
+        beHit := true
+        strategy.exit("Short exit", "Short", profit=tpTicks, stop=ep - beOff * mt)
+
+
+// 7) END OF WINDOW
+if flatAtEnd and sessEnd
+    strategy.close_all(comment="EOD")
+
+
+// 8) PLOTS (same look as the indicator)
+hOS = hline(osLvl, "Oversold", color=color.red, linestyle=hline.style_dashed)
+hOB = hline(obLvl, "Overbought", color=color.red, linestyle=hline.style_dashed)
+hline(95, "Extreme Overbought", color=color.white, linestyle=hline.style_dashed)
+hline(5,  "Extreme Oversold",   color=color.white, linestyle=hline.style_dashed)
+hline(50, "Midline", color=color.gray, linestyle=hline.style_dotted, display=display.none)
+fill(hOS, hOB, color=color.new(color.navy, 90), title="Zone Fill")
+
+plot(comp1, "Composite Stoch 1", color=color.rgb(76, 175, 80), linewidth=1)
+plot(comp2, "Composite Stoch 2", color=color.aqua, linewidth=1, display=display.none)
+plot(comp3, "Composite Stoch 3", color=color.blue, linewidth=1, display=display.none)
+plot(comp4, "Composite Stoch 4", color=color.rgb(242, 54, 69), linewidth=2)
+plot(compA, "Composite Average", color=color.white, linewidth=2)
+
+bgcolor(atOB ? bgOBColour : atOS ? bgOSColour : na, title="Signal condition background")
+
+alertcondition(obCross, "Overbought signal", "Quad MTF: checked lines crossed above overbought")
+alertcondition(osCross, "Oversold signal", "Quad MTF: checked lines crossed below oversold")
+
+
+// 9) TABLE: Average per checked timeframe
+var table tbl = table.new(position.top_right, 2, 8, bgcolor=color.new(color.black, 30))
+if showTable and barstate.islast
+    table.clear(tbl, 0, 0, 1, 7)
+    int row = 0
+    for i = 0 to 6
+        if array.get(uses, i)
+            float v = array.get(SA, i)
+            color c = na(v) ? color.gray : v >= obLvl ? color.red : v <= osLvl ? color.lime : color.white
+            table.cell(tbl, 0, row, array.get(tfs, i), text_color=color.gray, text_size=size.small)
+            table.cell(tbl, 1, row, na(v) ? "-" : str.tostring(v, "#"), text_color=c, text_size=size.small)
+            row += 1
