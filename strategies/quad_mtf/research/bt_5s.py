@@ -5,7 +5,7 @@ TP 200 ticks, SL 100 ticks, optional breakeven: at +100 ticks move the stop to e
 Exits simulated on 1s bars; if stop and target fall in the same 1s bar, the stop counts.
 10 MNQ ($5/tick), $0.74/side/contract. One trade at a time.
 Data: research/build_cache.py output (1s front month, 07:00-13:00 CT per day).
-Usage: python bt_5s.py cache_old.npz cache_new.npz
+Usage: python bt_5s.py v1|v2 cache_old.npz cache_new.npz
 """
 import sys
 import numpy as np
@@ -43,12 +43,16 @@ def day_trades(t, p, cfg):
     sig[up & ~np.r_[False, up[:-1]]] = 1
     sig[dn & ~np.r_[False, dn[:-1]]] = -1
     if cfg.get("fade"): sig = -sig
-    out = []; free_at = -1
+    out = []; free_at = -1; used = set()
     for j in np.flatnonzero(sig):
         if bend[j] < START or bend[j] >= END - 5: continue
         e = int(np.searchsorted(t, bend[j]))        # first 1s bar after the 5s bar closed
         if e >= len(t) or e <= free_at or t[e] - bend[j] > 10: continue
-        d = sig[j]; px = o[e]
+        d = sig[j]
+        if cfg.get("once"):
+            if d in used: continue
+            used.add(d)
+        px = o[e]
         sl = cfg["sl"] * TICK; tp = cfg["tp"] * TICK
         hh, ll = h[e:], l[e:]
         fav = (hh - px) if d == 1 else (px - ll)     # best move within each 1s bar
@@ -87,15 +91,22 @@ def summary(df):
             f"net=${p.sum():9.0f} avg=${p.mean():6.1f} maxDD=${dd:7.0f} exits {k}")
 
 
+VARIANTS = {
+    "v1": [("85/15, TP 200 SL 100, no BE", dict(hi=85, lo=15, tp=200, sl=100)),
+           ("85/15, BE 100 -> +3", dict(hi=85, lo=15, tp=200, sl=100, be=100, be_off=3)),
+           ("85/15, BE, 1 tick stop slippage", dict(hi=85, lo=15, tp=200, sl=100, be=100, be_off=3, slip=1)),
+           ("85/15, reversed (fade), BE", dict(hi=85, lo=15, tp=200, sl=100, be=100, be_off=3, fade=True))],
+    "v2": [("90/10, TP 100 SL 100, once per level per day", dict(hi=90, lo=10, tp=100, sl=100, once=True)),
+           ("  same, 1 tick stop slippage", dict(hi=90, lo=10, tp=100, sl=100, once=True, slip=1)),
+           ("  same, reversed (fade)", dict(hi=90, lo=10, tp=100, sl=100, once=True, fade=True)),
+           ("90/10, TP 100 SL 100, every signal", dict(hi=90, lo=10, tp=100, sl=100))],
+}
+
 if __name__ == "__main__":
-    base = dict(hi=85, lo=15, tp=200, sl=100)
-    variants = [("as specified, no BE", dict(base)),
-                ("as specified, BE 100 -> +3", dict(base, be=100, be_off=3)),
-                ("BE, 1 tick slippage on stops", dict(base, be=100, be_off=3, slip=1)),
-                ("reverse (fade), BE", dict(base, be=100, be_off=3, fade=True))]
-    for name, cfg in variants:
+    which = sys.argv[1]
+    for name, cfg in VARIANTS[which]:
         print(f"\n=== {name}")
-        for path in sys.argv[1:]:
+        for path in sys.argv[2:]:
             df = run(path, cfg)
             lab = "2021-23" if "db2" in path else "2025-26"
             print(f"  {lab}: {summary(df)}", flush=True)

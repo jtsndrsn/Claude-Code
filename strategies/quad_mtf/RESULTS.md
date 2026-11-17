@@ -51,3 +51,14 @@ above 85; short when all three first go below 15. Entry next 1s open, TP 200 / S
 | Reversed (fade), BE | PF 0.97, -$49k | PF 0.96, -$117k |
 - Win rate without BE is ~33-35%, about what a coin flip gives with a 2:1 target/stop; commissions on
   13-23 trades/day make it lose. Longs and shorts both lose. No edge in either direction.
+
+### 90/10, TP 100 / SL 100, one long and one short per day (`bt_5s.py v2`)
+| | 2021-23 | 2025-26 |
+|---|---|---|
+| Once per level per day | 898 trades, win 51%, PF 0.99, -$2.7k | 908, win 51%, PF 0.98, -$4.0k |
+|   shorts only | 449, PF 1.08, +$9.0k | 454, PF 1.03, +$3.0k |
+|   longs only | 449, PF 0.90, -$11.7k | 454, PF 0.94, -$7.0k |
+| Every signal | 6,394, PF 0.97, -$41k | 8,153, PF 0.89, -$240k |
+| Once per level, reversed | PF 0.90, -$24k | PF 0.90, -$23k |
+- Breakeven overall. Shorts edge out in both periods but 53% / 52% wins on ~450 trades is within chance
+  (1 standard error ~2.4%). Not a usable edge yet.
