@@ -39,3 +39,15 @@ before entry, trade-aligned (long = value, short = 100 - value). "Quick SL" = st
 - Breakouts: quick stops came when 30s/1m Quad was less extended in the breakout direction (~64-68 vs ~72).
 - No filter works in both periods: every skip rule that saved $1-6k in 2021-23 cost $7-41k in 2025-26.
   Not adopted.
+
+## 5-second continuation (2026-11-17) — `research/bt_5s.py`
+5s bars from 1s data, 08:30-13:00 CT (data ends 13:00). Long when Stoch 1, Stoch 4 and Average all first go
+above 85; short when all three first go below 15. Entry next 1s open, TP 200 / SL 100 ticks, 10 MNQ.
+| | 2021-23 | 2025-26 |
+|---|---|---|
+| No BE | 5,771 trades, PF 0.96, -$70k | 9,182 trades, PF 0.89, -$355k |
+| BE at +100 -> stop +3 ticks | 6,979, PF 0.90, -$168k | 10,397, PF 0.86, -$372k |
+| BE + 1 tick stop slippage | PF 0.89, -$194k | PF 0.85, -$411k |
+| Reversed (fade), BE | PF 0.97, -$49k | PF 0.96, -$117k |
+- Win rate without BE is ~33-35%, about what a coin flip gives with a 2:1 target/stop; commissions on
+  13-23 trades/day make it lose. Longs and shorts both lose. No edge in either direction.
