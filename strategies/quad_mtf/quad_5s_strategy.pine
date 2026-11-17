@@ -1,0 +1,109 @@
+//@version=6
+// Quad 5s Continuation - strategy version of the 5-second QuadRotation continuation test.
+// Long when Stoch 1, Stoch 4 and the Stochastic Average all first close above the overbought line;
+// short when all three first close below the oversold line. Market order fills at the next bar's open.
+// Fixed TP/SL in ticks, optional breakeven, one trade per level (long / short) per session.
+// Same stochastic math and defaults as QuadRotation. Built for a 5-second MNQ chart.
+strategy("Quad 5s Continuation", shorttitle="Quad5s", overlay=true, pyramiding=0,
+     default_qty_type=strategy.fixed, default_qty_value=10, initial_capital=50000,
+     commission_type=strategy.commission.cash_per_contract, commission_value=0.74)
+
+// 1) INPUTS
+grpS = "Signal"
+obLvl        = input.int(90, "Overbought line (long above)", minval=51, maxval=99, group=grpS)
+osLvl        = input.int(10, "Oversold line (short below)", minval=1, maxval=49, group=grpS)
+oncePerLevel = input.bool(true, "Only one trade per level per session", group=grpS, tooltip="At most one long (overbought cross) and one short (oversold cross) per session.")
+allowLong    = input.bool(true, "Take longs", group=grpS)
+allowShort   = input.bool(true, "Take shorts", group=grpS)
+reverseSig   = input.bool(false, "Reverse signals (fade instead of continuation)", group=grpS)
+
+grpR = "Risk (ticks)"
+tpTicks  = input.int(100, "Take profit", minval=1, group=grpR)
+slTicks  = input.int(100, "Stop loss", minval=1, group=grpR)
+useBE    = input.bool(false, "Use breakeven stop", group=grpR)
+beTrig   = input.int(50, "Breakeven trigger (ticks in profit)", minval=1, group=grpR)
+beOff    = input.int(3, "Breakeven offset (ticks beyond entry)", group=grpR, tooltip="Once the trigger is reached, the stop moves to entry + this many ticks (0 = exactly at entry). Applies from the next bar.")
+
+grpT = "Session"
+tz        = input.string("America/Chicago", "Time zone", group=grpT)
+tradeSess = input.session("0830-1300", "Trade window", group=grpT)
+flatAtEnd = input.bool(true, "Flatten at end of trade window", group=grpT)
+
+grpQ = "QuadRotation settings"
+w1 = input.float(0.2, "Stoch 1 Weight", minval=0, maxval=10, group=grpQ)
+w2 = input.float(0.6, "Stoch 2 Weight", minval=0, maxval=10, group=grpQ)
+w3 = input.float(1.4, "Stoch 3 Weight", minval=0, maxval=10, group=grpQ)
+w4 = input.float(1.8, "Stoch 4 Weight", minval=0, maxval=10, group=grpQ)
+k1 = input.int(9,  "%K Length (Stoch 1)", group=grpQ, inline="s1")
+d1 = input.int(3,  "%D", group=grpQ, inline="s1")
+k2 = input.int(14, "%K Length (Stoch 2)", group=grpQ, inline="s2")
+d2 = input.int(3,  "%D", group=grpQ, inline="s2")
+k3 = input.int(40, "%K Length (Stoch 3)", group=grpQ, inline="s3")
+d3 = input.int(4,  "%D", group=grpQ, inline="s3")
+k4 = input.int(60, "%K Length (Stoch 4)", group=grpQ, inline="s4")
+d4 = input.int(10, "%D", group=grpQ, inline="s4")
+smoothK4 = input.int(1, "Smoothing (Stoch 4)", group=grpQ)
+
+
+// 2) QUADROTATION (same math as the indicator)
+s1 = ta.sma(ta.stoch(close, high, low, k1), d1)
+s2 = ta.sma(ta.stoch(close, high, low, k2), d2)
+s3 = ta.sma(ta.stoch(close, high, low, k3), d3)
+s4 = ta.sma(ta.sma(ta.stoch(close, high, low, k4), smoothK4), d4)
+sAvg = ((s1 - 50) * w1 + (s2 - 50) * w2 + (s3 - 50) * w3 + (s4 - 50) * w4) / 4 + 50
+
+allAbove = s1 > obLvl and s4 > obLvl and sAvg > obLvl
+allBelow = s1 < osLvl and s4 < osLvl and sAvg < osLvl
+upCross = allAbove and not allAbove[1]
+dnCross = allBelow and not allBelow[1]
+longSig  = reverseSig ? dnCross : upCross
+shortSig = reverseSig ? upCross : dnCross
+
+
+// 3) SESSION STATE
+inSess    = not na(time(timeframe.period, tradeSess, tz))
+sessStart = inSess and not inSess[1]
+sessEnd   = not inSess and inSess[1]
+
+var bool longUsed  = false
+var bool shortUsed = false
+var bool beHit     = false
+if sessStart
+    longUsed  := false
+    shortUsed := false
+
+
+// 4) ENTRIES (signal on bar close -> market fill at next bar open)
+flat = strategy.position_size == 0
+if inSess and flat and longSig and allowLong and not (oncePerLevel and longUsed)
+    strategy.entry("Long", strategy.long)
+    strategy.exit("Long exit", "Long", profit=tpTicks, loss=slTicks)
+    longUsed := true
+    beHit := false
+else if inSess and flat and shortSig and allowShort and not (oncePerLevel and shortUsed)
+    strategy.entry("Short", strategy.short)
+    strategy.exit("Short exit", "Short", profit=tpTicks, loss=slTicks)
+    shortUsed := true
+    beHit := false
+
+
+// 5) BREAKEVEN: once price reaches the trigger, move the stop to entry +/- offset
+ep = strategy.position_avg_price
+mt = syminfo.mintick
+if useBE and not beHit
+    if strategy.position_size > 0 and high - ep >= beTrig * mt
+        beHit := true
+        strategy.exit("Long exit", "Long", profit=tpTicks, stop=ep + beOff * mt)
+    else if strategy.position_size < 0 and ep - low >= beTrig * mt
+        beHit := true
+        strategy.exit("Short exit", "Short", profit=tpTicks, stop=ep - beOff * mt)
+
+
+// 6) END OF WINDOW
+if flatAtEnd and sessEnd
+    strategy.close_all(comment="EOD")
+
+
+// 7) MARKERS
+plotshape(longSig and inSess, "Long signal", shape.triangleup, location.belowbar, color.new(color.lime, 0), size=size.tiny)
+plotshape(shortSig and inSess, "Short signal", shape.triangledown, location.abovebar, color.new(color.red, 0), size=size.tiny)
