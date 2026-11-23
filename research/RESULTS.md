@@ -177,3 +177,10 @@ Fast fail = stopped out without ever reaching half the BE trigger (fades 50 tick
   Breakouts with the late move avg $313 (68); against it (reversal through the other line) avg $541 (35, positive
   both periods, small sample).
 - Conclusion for both: no filter adopted.
+
+## Overnight 7% price limit (Nov 2026)
+On 2026-11-23 NQ futures hit CME's 7% overnight up-limit before the open; the range high was the limit price and
+price ran through it at 08:30 (short stopped out). In the backtest data (860 mornings, Nov 2021 - Nov 2026) the
+largest overnight move from the prior settlement was -6.0% (2025-04-07); the limit was never reached. v3.3 adds a
+"Limit-move guard" (default on): no trades when the range high/low is within 0.5% of the 7% limit. It never
+triggers in the backtest, so results are unchanged.
