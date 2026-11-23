@@ -184,3 +184,8 @@ price ran through it at 08:30 (short stopped out). In the backtest data (860 mor
 largest overnight move from the prior settlement was -6.0% (2025-04-07); the limit was never reached. v3.3 adds a
 "Limit-move guard" (default on): no trades when the range high/low is within 0.5% of the 7% limit. It never
 triggers in the backtest, so results are unchanged.
+v3.4: on 2026-11-23 the guard did not fire: vs Friday's close (25,288.25) the pinned high (26,878.50) was +6.3%,
+because CME's band uses the 15:00 CT settlement (~25,120) while the chart's daily close can be later. The guard now
+also skips when the move is 5%+ and the range high/low was held flat (set 10+ min before the open and still touched
+in the last 2 min). Backtest check: only 2022-12-13 had a 5%+ range move and it was not pinned (no trade that day),
+so results are unchanged.
