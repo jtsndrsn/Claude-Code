@@ -1,5 +1,10 @@
 //@version=6
-// Pre-Open Range Reversal  -  Version 3.2
+// Pre-Open Range Reversal  -  Version 3.4
+// v3.4: limit-move guard also catches a range pinned at a price ceiling/floor into the open (5%+ move
+//       from the prior close and the high/low held flat for 10+ minutes), since the chart's daily close
+//       is not always CME's 15:00 settlement (2026-11-23 showed +6.3% vs close while locked at the limit).
+// v3.3: limit-move guard: no trades when the range high/low is within 0.5% of CME's 7% overnight
+//       price limit (the line is then the limit, not a real level; at 08:30 the limit lifts).
 // v3.2: chart visuals only: TradingView-style position box (target zone / stop zone, the stop zone
 //       follows the breakeven move), and a Colors group to set every line and box color.
 // v3.1: chart visuals only (no trading change): developing range lines for the last 5 minutes of
@@ -82,6 +87,13 @@ boUseBE      = input.bool(true, "Breakout breakeven stop", group = grpB)
 boBeTrig     = input.int(200, "Breakout BE trigger (ticks)", minval = 1, group = grpB)
 boBeOff      = input.int(100, "Breakout BE offset (ticks)", group = grpB)
 boMaxTrades  = input.int(2, "Breakout max trades per day", minval = 1, maxval = 2, group = grpB, tooltip = "One per side: after the first breakout trade ends, the other side can still trigger.")
+
+grpL = "Limit-move guard"
+useLimitGuard = input.bool(true, "Skip the day when price is near the overnight price limit", group = grpL, tooltip = "CME caps equity-index futures at a 7% move from the previous settlement outside regular hours and lifts the cap at the 08:30 CT open. If the range high or low is within the buffer of that limit, the range line is the limit itself, not a real level, and price can jump straight through it at the open. No trades are taken that day. Never triggered in the Nov 2021 - Nov 2026 backtest (largest overnight move -6.0% on 2025-04-07).")
+limitPct      = input.float(7.0, "Overnight limit (%)", minval = 1, step = 0.5, group = grpL)
+limitBuffer   = input.float(0.5, "Skip when within (%) of the limit", minval = 0, step = 0.1, group = grpL)
+pinPct        = input.float(5.0, "Also skip if move is at least (%) and the high/low is pinned", minval = 0, step = 0.5, group = grpL, tooltip = "A price limit shows up as the range high (or low) being hit again and again at exactly the same price without being exceeded. If the overnight move from the previous close is at least this much AND the range high/low was set at least the pinned-minutes below before the open and is still being touched in the last 2 minutes, the day is skipped.")
+pinMinutes    = input.int(10, "Pinned for at least (minutes)", minval = 1, group = grpL)
 
 grpM = "Daily momentum filter"
 useMomFilter = input.bool(true, "Skip longs when daily momentum is up", group = grpM, tooltip = "Skips the LONG fade at the range low when yesterday's daily MACD histogram (12/26/9) is above 0 AND +DI is above -DI (DMI 14). In the backtest these were the weakest trades: skipping them raised profit and cut the drawdown. The same rule for shorts lost money, so shorts are not filtered.")
@@ -169,10 +181,13 @@ f_dmom() =>
     [_h[1], _dp[1], _dn[1]]
 [dHist, dPlus, dMinus] = request.security(syminfo.tickerid, "D", f_dmom(), lookahead = barmerge.lookahead_on)
 momSkipLong = useMomFilter and not na(dHist) and not na(dPlus) and dHist > 0 and dPlus > dMinus
+// Previous daily close = the CME settlement for futures. Last CLOSED daily bar, never repaints.
+prevSettle = request.security(syminfo.tickerid, "D", close[1], lookahead = barmerge.lookahead_on)
 
 var float rangeHigh = na
 var float rangeLow  = na
 var bool  rangeDone = false
+var bool  limitDay  = false
 var int   tradesToday = 0
 var bool  longUsed  = false
 var bool  shortUsed = false
@@ -186,11 +201,19 @@ var int   shortEntryBar = -1
 var bool  boLongUsed  = false
 var bool  boShortUsed = false
 var int   longEntryBar  = -1
+var int   hiSetTime = na   // when the current range high was first reached
+var int   loSetTime = na
+var int   hiTouch   = na   // last bar time that traded at exactly the range high
+var int   loTouch   = na
 
 if inRange and not inRange[1]
     // New day's range starts: reset everything
     rangeHigh   := high
     rangeLow    := low
+    hiSetTime   := time
+    loSetTime   := time
+    hiTouch     := time
+    loTouch     := time
     rangeDone   := false
     tradesToday := 0
     longUsed    := false
@@ -205,6 +228,14 @@ if inRange and not inRange[1]
     boShortUsed    := false
     boDay          := false
 else if inRange
+    if high > rangeHigh
+        hiSetTime := time
+    if high >= rangeHigh
+        hiTouch := time
+    if low < rangeLow
+        loSetTime := time
+    if low <= rangeLow
+        loTouch := time
     rangeHigh := math.max(rangeHigh, high)
     rangeLow  := math.min(rangeLow, low)
 
@@ -214,6 +245,15 @@ else if inRange
 if inRange and not nextInRange and barstate.isconfirmed
     rangeDone := true
     boDay := useVixSwitch and not na(vixChg) and vixChg < -vixDrop
+    guardPct = limitPct - limitBuffer
+    upPct = na(prevSettle) ? na : (rangeHigh / prevSettle - 1) * 100
+    dnPct = na(prevSettle) ? na : (1 - rangeLow / prevSettle) * 100
+    endMs = time_close
+    pinnedHi = endMs - hiSetTime >= pinMinutes * 60000 and endMs - hiTouch <= 120000
+    pinnedLo = endMs - loSetTime >= pinMinutes * 60000 and endMs - loTouch <= 120000
+    limitDay := useLimitGuard and not na(prevSettle) and (upPct >= guardPct or dnPct >= guardPct or (upPct >= pinPct and pinnedHi) or (dnPct >= pinPct and pinnedLo))
+    if limitDay
+        label.new(bar_index, rangeHigh, "Near 7% limit: no trades today (" + str.tostring(math.max(upPct, dnPct), "#.0") + "%)", style = label.style_label_lower_left, color = color.new(color.orange, 10), textcolor = color.white, size = size.small)
 
 // ---------- Track fills ----------
 totalTrades = strategy.closedtrades + strategy.opentrades
@@ -247,7 +287,7 @@ if strategy.closedtrades > nz(strategy.closedtrades[1])
 
 // ---------- Entries ----------
 flat       = strategy.position_size == 0
-canTrade   = rangeDone and nextInTrade and not lastTradeBar and flat and tradesToday < maxTrades and not na(rangeHigh) and not na(rangeLow)
+canTrade   = rangeDone and not limitDay and nextInTrade and not lastTradeBar and flat and tradesToday < maxTrades and not na(rangeHigh) and not na(rangeLow)
 // Only rest a limit when price is on the correct side of the level, so it fills on a touch
 // rather than instantly at market (e.g. re-arming after being stopped out beyond the level).
 longLvl    = rangeLow  - entryDelay * tick
