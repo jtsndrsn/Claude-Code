@@ -225,7 +225,7 @@ Win rates barely move (59-67% on downtrend days); breakout-every-day variants dr
 
 Live check Nov 9-27 2026 (Webull 1-minute bars, 14 sessions, Thanksgiving excluded): every day was a D1/D3
 downtrend day (13 were D2). v3.5 +$6,465; D3 + long SL 150 +$7,090 (five long-fade stops cost $765 instead of $890);
-D2 + VIX 0.6 +$6,465 (no change). Long fades stopped out on 6 of 8 tries in this stretch. Nov 23 shows +$235 on
+D2 + VIX 0.6 +$6,465 (no change). Long fades stopped out on 5 of 7 tries in this stretch. Nov 23 shows +$235 on
 1-minute bars but was a real stop-out at the 7% limit; v3.4's guard now skips that day.
 Decision: no change to `strategies/porr.pine`. Candidates to re-check with more downtrend data: D2 + VIX 0.6,
 D3 + long-fade SL 150.
