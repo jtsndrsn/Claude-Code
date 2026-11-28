@@ -189,3 +189,43 @@ because CME's band uses the 15:00 CT settlement (~25,120) while the chart's dail
 also skips when the move is 5%+ and the range high/low was held flat (set 10+ min before the open and still touched
 in the last 2 min). Backtest check: only 2022-12-13 had a 5%+ range move and it was not pinned (no trade that day),
 so results are unchanged.
+
+## Downtrend mode research for v3.5 (Nov 2026) - nothing adopted
+Baseline = v3.5 (fade TP 400 / with-trend TP 800; all 44 months +$210,128, max DD $16,290, 1,113 trades).
+Normal days unchanged; each variant applies only on downtrend days, defined from the prior 15:00 CT close
+(days with < 50 days of EMA history excluded). Scripts: `downtrend.py`, `live_dt.py`.
+
+| Definition | Downtrend days 2021-23 | 2025-26 |
+|---|---|---|
+| D1: close < EMA50 and EMA50 lower than 5 days ago | 189 of 401 | 128 of 457 |
+| D2: 20-day return < -5% | 114 of 401 | 43 of 457 |
+| D3: close < EMA20 and close < EMA50 | 172 of 401 | 137 of 457 |
+
+Change vs v3.5 on downtrend days (2021-23 / 2025-26), and all-44-month net / max DD:
+| Variant | D1 | D2 | D3 |
+|---|---|---|---|
+| a skip long fades | +6.0k / -16.0k (200.1k, 13.5k) | +2.4k / -7.4k (205.0k, 15.1k) | +4.3k / -20.7k (193.7k, 14.2k) |
+| b1 long fades TP 300 | -0.3k / -0.8k | +1.0k / -2.0k | +0.6k / -3.4k |
+| b2 long fades TP 350 | 0 / -0.8k | +0.8k / -1.0k | 0 / -1.5k |
+| b3 long fades SL 120 | -0.9k / -3.3k | -2.2k / -2.4k | +0.2k / -3.0k |
+| b4 long fades SL 150 | +0.9k / -0.4k | +0.1k / -0.5k | **+1.6k / +0.1k** (211.9k, 16.0k) |
+| c breakout mode every downtrend day | -21.6k / -52.8k (136k, 33.6k) | -45.3k / -10.8k | -28.8k / -73.3k |
+| d1 short-only breakouts on VIX days | +0.3k / -16.2k | +5.1k / -8.2k | +8.5k / -17.3k |
+| d2 short-only breakouts every downtrend day | -4.2k / -69.7k | -18.5k / -24.0k | -3.3k / -85.4k |
+| e1 VIX threshold 0.6 in downtrends | +19.6k / -10.0k | **+11.4k / 0** (221.5k, 15.6k) | +15.4k / -10.0k |
+| e2 VIX threshold 0.5 in downtrends | +15.7k / -5.6k | +5.7k / -1.4k | +13.0k / -5.6k |
+| f skip long fades filled 08:30-08:32 | -2.6k / -8.2k | -3.7k / -5.4k | -1.5k / -10.2k |
+
+Win rates barely move (59-67% on downtrend days); breakout-every-day variants drop to 52-61% and blow up drawdown.
+- Only D3 + long-fade SL 150 improves both periods, by +$1.6k / +$0.1k: noise, not an edge.
+- D2 + VIX 0.6 is best when picked on either period (+$11.4k 2021-23, unchanged 2025-26 because no D2 day there
+  had a VIX drop between 0.6 and 0.9); it ties rather than improves 2025-26, so it fails the "both periods" rule.
+- Picked on 2021-23 with D1/D3, the best rule (VIX 0.6) costs $10k in 2025-26.
+- Skipping long fades (the intuitive downtrend rule) helps 2021-23 but costs $7-21k in 2025-26.
+
+Live check Nov 9-27 2026 (Webull 1-minute bars, 14 sessions, Thanksgiving excluded): every day was a D1/D3
+downtrend day (13 were D2). v3.5 +$6,465; D3 + long SL 150 +$7,090 (five long-fade stops cost $765 instead of $890);
+D2 + VIX 0.6 +$6,465 (no change). Long fades stopped out on 6 of 8 tries in this stretch. Nov 23 shows +$235 on
+1-minute bars but was a real stop-out at the 7% limit; v3.4's guard now skips that day.
+Decision: no change to `strategies/porr.pine`. Candidates to re-check with more downtrend data: D2 + VIX 0.6,
+D3 + long-fade SL 150.
