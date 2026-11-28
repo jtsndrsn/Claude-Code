@@ -361,6 +361,8 @@ All on 1-second data, v3 settings:
 - **Research notes:** all of the above are recorded in `research/RESULTS.md`, except the 08:15-08:30
   pre-open study, which the user declined to save.
 
+- **2026-11-27, v3.5:** fade TP changed to 400 / with-trend TP 800 (from 500 / 1000), owner decision.
+
 ## 6. Ideas rejected (summary)
 - **Exits:** trailing stops, step stops, stall exits, partial TP, time stops, holding past 11:00,
   breakeven trigger 175.

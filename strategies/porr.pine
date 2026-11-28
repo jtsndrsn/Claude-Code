@@ -1,5 +1,8 @@
 //@version=6
-// Pre-Open Range Reversal  -  Version 3.4
+// Pre-Open Range Reversal  -  Version 3.5
+// v3.5: fade take profit 400 (was 500) and with-trend take profit 800 (was 1000). All 44 months of
+//       1-second data: +$210.1k vs +$211.7k, max drawdown $16.3k vs $23.8k, 2021-23 +$21.3k vs +$4.8k
+//       (costs ~$18k in 2025-26). Owner decision 2026-11-27.
 // v3.4: limit-move guard also catches a range pinned at a price ceiling/floor into the open (5%+ move
 //       from the prior close and the high/low held flat for 10+ minutes), since the chart's daily close
 //       is not always CME's 15:00 settlement (2026-11-23 showed +6.3% vs close while locked at the limit).
@@ -56,7 +59,7 @@ tradeSess = input.session("0830-1100", "Trade window (look for touches)", group 
 flatAtEnd = input.bool(true, "Flatten open trade at end of trade window", group = grpS)
 
 grpR = "Risk (ticks)"
-tpTicks   = input.int(500, "Take profit (ticks)", minval = 1, group = grpR)
+tpTicks   = input.int(400, "Take profit (ticks)", minval = 1, group = grpR)
 slTicks   = input.int(175, "Stop loss (ticks)", minval = 1, group = grpR)
 useBE     = input.bool(true, "Use breakeven stop", group = grpR)
 beTrigger = input.int(100, "Breakeven trigger (ticks in profit)", minval = 1, group = grpR)
@@ -66,7 +69,7 @@ useLineTP = input.bool(false, "TP at the opposite range line", group = grpR, too
 
 grpF = "Trend filter (take profit)"
 useTrendTP   = input.bool(true, "Use bigger TP on with-trend trades", group = grpF, tooltip = "Longs in an uptrend and shorts in a downtrend use the with-trend TP. Counter-trend trades keep the normal TP.")
-tpTrendTicks = input.int(1000, "With-trend take profit (ticks)", minval = 1, group = grpF)
+tpTrendTicks = input.int(800, "With-trend take profit (ticks)", minval = 1, group = grpF)
 trendTf      = input.timeframe("1D", "Trend timeframe", group = grpF, tooltip = "Fixed timeframe so the trend reads the same on every chart timeframe. Keep it at or above the chart timeframe.")
 trendLen     = input.int(50, "Trend EMA length", minval = 1, group = grpF, tooltip = "Uptrend = last closed trend-timeframe bar closed above its EMA. Downtrend = closed below.")
 showTrend    = input.bool(false, "Show trend EMA", group = grpF)
